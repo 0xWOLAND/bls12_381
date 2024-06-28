@@ -18,14 +18,14 @@ fn criterion_benchmark(c: &mut Criterion) {
             b.iter(|| G2Prepared::from(h))
         });
         let prep = G2Prepared::from(h);
-        c.bench_function("miller loop for pairing", move |b| {
-            b.iter(|| multi_miller_loop(&[(&g, &prep)]))
-        });
-        let prep = G2Prepared::from(h);
-        let r = multi_miller_loop(&[(&g, &prep)]);
-        c.bench_function("final exponentiation for pairing", move |b| {
-            b.iter(|| r.final_exponentiation())
-        });
+        // c.bench_function("miller loop for pairing", move |b| {
+        //     b.iter(|| multi_miller_loop(&[(&g, &prep)]))
+        // });
+        // let prep = G2Prepared::from(h);
+        // let r = multi_miller_loop(&[(&g, &prep)]);
+        // c.bench_function("final exponentiation for pairing", move |b| {
+        //     b.iter(|| r.final_exponentiation())
+        // });
     }
     // G1Affine
     {

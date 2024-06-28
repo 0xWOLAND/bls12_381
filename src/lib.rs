@@ -67,6 +67,9 @@ mod fp12;
 #[cfg(feature = "groups")]
 mod fp6;
 
+#[cfg(feature = "fast-pairings")]
+mod fast_pairings;
+
 // The BLS parameter x for BLS12-381 is -0xd201000000010000
 #[cfg(feature = "groups")]
 const BLS_X: u64 = 0xd201_0000_0001_0000;
@@ -81,6 +84,9 @@ pub use pairings::{pairing, Bls12, Gt, MillerLoopResult};
 
 #[cfg(all(feature = "pairings", feature = "alloc"))]
 pub use pairings::{multi_miller_loop, G2Prepared};
+
+#[cfg(feature = "fast-pairings")]
+pub use fast_pairings::*;
 
 /// Use the generic_array re-exported by digest to avoid a version mismatch
 #[cfg(feature = "experimental")]

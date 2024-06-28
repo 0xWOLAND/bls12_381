@@ -127,6 +127,25 @@ impl Fp12 {
         Fp12 { c0, c1 }
     }
 
+    pub fn mul_by_034(&self, c0: &Fp2, c3: &Fp2, c4: &Fp2) -> Fp12 {
+        let t0 = Fp6 {
+            c0: self.c0.c0 * c0,
+            c1: self.c0.c1 * c0,
+            c2: self.c0.c2 * c0,
+        };
+        let mut t1 = self.c1;
+        t1.mul_by_01(c3, c4);
+        let o = c0 + c3;
+        let mut t2 = self.c0 + self.c1;
+        t2.mul_by_01(&o, c4);
+        t2 -= t0;
+        let c1 = t2 - t1;
+        t1.mul_by_nonresidue();
+        let c0 = t0 + t1;
+
+        Fp12 { c0, c1 }
+    }
+
     #[inline(always)]
     pub fn is_zero(&self) -> Choice {
         self.c0.is_zero() & self.c1.is_zero()
