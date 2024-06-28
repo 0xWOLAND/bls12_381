@@ -112,6 +112,11 @@ impl_binops_additive!(Fp2, Fp2);
 impl_binops_multiplicative!(Fp2, Fp2);
 
 impl Fp2 {
+    /// Constructs a new Fp2 element.
+    pub fn new(c0: Fp, c1: Fp) -> Self {
+        Fp2 { c0, c1 }
+    }
+
     /// Returns the zero element of Fp2.
     #[inline]
     pub const fn zero() -> Fp2 {
@@ -209,6 +214,14 @@ impl Fp2 {
         Fp2 {
             c0: (&a).mul(&b),
             c1: (&c).mul(&self.c1),
+        }
+    }
+
+    /// Doubles this element.
+    pub fn double(&self) -> Fp2 {
+        Fp2 {
+            c0: self.c0.double(),
+            c1: self.c1.double(),
         }
     }
 
