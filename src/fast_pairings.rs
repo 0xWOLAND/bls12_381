@@ -122,7 +122,7 @@ pub(crate) fn double(acc: &mut G2Affine) -> Fp2 {
 }
 
 /// Perform the Miller loop.
-pub fn miller_loop(p: &G1Affine, q: &G2Affine) -> Fp12 {
+fn miller_loop(p: &G1Affine, q: &G2Affine) -> Fp12 {
     let mut f = Fp12::one();
     let mut acc = (*q).clone();
 
@@ -156,4 +156,87 @@ pub fn miller_loop(p: &G1Affine, q: &G2Affine) -> Fp12 {
     });
 
     f
+}
+
+/// a^((p - 1) / 2)
+fn legendre(a: Fp12) -> Fp12 {
+    a.pow_vartime(&[
+        0x0d00_88f5_1cbf_f34d,
+        0x258d_d3db_21a5_d66b,
+        0xb23b_a5c2_79c2_895f,
+        0xb398_6950_7b58_7b12,
+        0x0f55_ffff_58a9_ffff,
+        0xdcff_7fff_ffff_d555,
+    ])
+}
+
+/// Toneelli-Shanks algorithm to compute cubic roots in a finite field.
+/// p - 1 = 2^s * t where s == 0 in this case
+/// if s == 1:
+///    return pow(n, (p + 1) // 4, p)
+pub(crate) fn tonelli_shanks(a: Fp12) -> Fp12 {
+    assert_eq!(
+        legendre(a),
+        Fp12::one(),
+        "not a cubic residue, cannot compute cubic root",
+    );
+    // let s = 2; // s = 2^s * t
+    let t = Fp([
+        0x02e3_aca8_3f47_199f,
+        0x5dad_bd4d_23eb_f6c2,
+        0x9962_969c_fe9d_0215,
+        0x445a_c211_e285_70ae,
+        0xae13_1c71_a1ec_e38e,
+        0x311c_5555_5555_4bda,
+    ]);
+
+    // t = 3k +/- 1
+    let k = Fp([
+        0x00f6_8ee2_bfc2_5ddf,
+        0xc9e4_946f_0bf9_5240,
+        0xddcb_8789_aa34_5607,
+        0x16c8_eb5b_4b81_d03a,
+        0x3a06_5ed0_8b4e_f684,
+        0xbb09_71c7_1c71_c3f3,
+    ]);
+
+    let three_times_k_plus_one = Fp([
+        0x02e3_aca8_3f47_199f,
+        0x5dad_bd4d_23eb_f6c2,
+        0x9962_969c_fe9d_0215,
+        0x445a_c211_e285_70ae,
+        0xae13_1c71_a1ec_e38e,
+        0x311c_5555_5555_4bda,
+    ]);
+    let c = Fp12::random(&mut rand::thread_rng()).pow_vartime(&t.0); // c = b^t
+    let mut r = a.pow_vartime(&t.0); // r = a^t
+
+    let mut h = Fp12::one();
+    let mut c = c.invert().unwrap();
+    let c_3 = c.square() * c;
+
+    let d = r.pow_vartime(&[1, 0, 0, 0, 0, 0]); // d = r^(3^(s - i - 1))
+
+    // in this case, c' = c^(3^(s - i - 1)) = c^3
+    if d == c_3 {
+        h = h * c;
+        r = r * c_3;
+    } else if d != Fp12::one() {
+        h = h * c.square();
+        r = r * c_3.square();
+    }
+
+    r = a.pow_vartime(&k.0) * h;
+    if t == three_times_k_plus_one {
+        r = r.invert().unwrap()
+    }
+
+    r
+}
+
+#[test]
+fn test_tonelli_shanks() {
+    let a = Fp12::random(&mut rand::thread_rng());
+    let cubic_root = tonelli_shanks(a);
+    assert_eq!(cubic_root.square() * cubic_root, a);
 }

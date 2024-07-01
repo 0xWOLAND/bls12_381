@@ -133,7 +133,7 @@ impl Fp12 {
             c1: self.c0.c1 * c0,
             c2: self.c0.c2 * c0,
         };
-        let mut t1 = self.c1;
+        let t1 = self.c1;
         t1.mul_by_01(c3, c4);
         let o = c0 + c3;
         let mut t2 = self.c0 + self.c1;
@@ -210,6 +210,23 @@ impl Fp12 {
                 c0: self.c0 * t,
                 c1: self.c1 * -t,
             })
+    }
+
+    /// Although this is labeled "vartime", it is only
+    /// variable time with respect to the exponent. It
+    /// is also not exposed in the public API.
+    pub fn pow_vartime(&self, by: &[u64; 6]) -> Self {
+        let mut res = Self::one();
+        for e in by.iter().rev() {
+            for i in (0..64).rev() {
+                res = res.square();
+
+                if ((*e >> i) & 1) == 1 {
+                    res *= self;
+                }
+            }
+        }
+        res
     }
 }
 
