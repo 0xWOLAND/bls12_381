@@ -44,13 +44,12 @@ pub mod notes {
     pub mod serialization;
 }
 
-
 mod scalar;
 /// Module containing various type definitions for compatibility with milagro_bls in SP1
 pub mod types;
 
 pub use scalar::Scalar;
-pub use types::{PublicKey, AggregateSignature};
+pub use types::{AggregateSignature, PublicKey};
 #[cfg(feature = "groups")]
 pub mod fp;
 #[cfg(feature = "groups")]
@@ -66,9 +65,9 @@ pub use g1::{G1Affine, G1Projective};
 pub use g2::{G2Affine, G2Projective};
 
 #[cfg(feature = "groups")]
-mod fp12;
+pub mod fp12;
 #[cfg(feature = "groups")]
-mod fp6;
+pub mod fp6;
 
 // The BLS parameter x for BLS12-381 is -0xd201000000010000
 #[cfg(feature = "groups")]
