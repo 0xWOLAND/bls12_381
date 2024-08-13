@@ -1,13 +1,18 @@
 //! This module implements arithmetic over the quadratic extension field Fp2.
 
+use cfg_if::cfg_if;
 use core::fmt;
 use core::ops::{Add, AddAssign, Mul, MulAssign, Neg, Sub, SubAssign};
 use rand_core::RngCore;
 use subtle::{Choice, ConditionallySelectable, ConstantTimeEq, CtOption};
 
 use crate::fp::Fp;
-#[cfg(target_os = "zkvm")]
-use sp1_lib::*;
+cfg_if! {
+    if #[cfg(target_os = "zkvm")] {
+        use sp1_lib::{syscall_bls12381_fp2_addmod, syscall_bls12381_fp2_submod, syscall_bls12381_fp2_mulmod };
+        use sp1_lib::{io::{hint_slice, read_vec}, unconstrained};
+    }
+}
 
 #[derive(Copy, Clone)]
 #[repr(C)] // NOTE: this is technically required for ensuring the memory layout used in the zkvm precompiles is valid
@@ -186,7 +191,7 @@ impl Fp2 {
         // let tmp = self.c0 + self.c1;
         // self.c0.sub_inp(&self.c1);
         // self.c1 = tmp;
-        self.mul_inp(&Fp2::non_residue())
+        self.mul_inp(&Fp2::non_residue());
     }
 
     #[inline(always)]
@@ -214,6 +219,29 @@ impl Fp2 {
 
         self.c1.lexicographically_largest()
             | (self.c1.is_zero() & self.c0.lexicographically_largest())
+    }
+
+    #[inline]
+    pub fn to_bytes(&self) -> [u8; 96] {
+        let mut res = [0; 96];
+        res[..48].copy_from_slice(&self.c0.to_bytes());
+        res[48..].copy_from_slice(&self.c1.to_bytes());
+        res
+    }
+
+    #[inline]
+    pub fn from_bytes(bytes: &[u8; 96]) -> CtOption<Fp2> {
+        let c0 = Fp::from_bytes(&bytes[..48].try_into().unwrap());
+        let c1 = Fp::from_bytes(&bytes[48..].try_into().unwrap());
+        let is_some = c0.is_some() & c1.is_some();
+
+        CtOption::new(
+            Fp2 {
+                c0: c0.unwrap(),
+                c1: c1.unwrap(),
+            },
+            is_some,
+        )
     }
 
     /// Internal function to multiply the internal representation by `R_INV`, equivalent to transforming from
@@ -398,7 +426,7 @@ impl Fp2 {
         }
     }
 
-    pub fn sqrt(&self) -> CtOption<Self> {
+    pub(crate) fn _sqrt(&self) -> CtOption<Self> {
         // Algorithm 9, https://eprint.iacr.org/2012/685.pdf
         // with constant time modifications.
 
@@ -450,10 +478,32 @@ impl Fp2 {
         })
     }
 
+    #[inline]
+    pub fn sqrt(&self) -> CtOption<Self> {
+        #[cfg(target_os = "zkvm")]
+        {
+            // Compute the inverse using the zkvm syscall
+            unconstrained! {
+                let mut buf = [0u8; 96];
+                buf.copy_from_slice(&self._sqrt().unwrap().to_bytes());
+                hint_slice(&buf);
+            }
+
+            let byte_vec = read_vec();
+            let bytes: [u8; 96] = byte_vec.try_into().unwrap();
+            let root = Fp2::from_bytes(&bytes).unwrap();
+            CtOption::new(root, !self.is_zero() & (root * root).ct_eq(self))
+        }
+        #[cfg(not(target_os = "zkvm"))]
+        {
+            self._sqrt()
+        }
+    }
+
     /// Computes the multiplicative inverse of this field
     /// element, returning None in the case that this element
     /// is zero.
-    pub fn invert(&self) -> CtOption<Self> {
+    pub(crate) fn _invert(&self) -> CtOption<Self> {
         // We wish to find the multiplicative inverse of a nonzero
         // element a + bu in Fp2. We leverage an identity
         //
@@ -468,10 +518,33 @@ impl Fp2 {
         // of (a + bu). Importantly, this can be computing using
         // only a single inversion in Fp.
 
-        (self.c0.square() + self.c1.square()).invert().map(|t| Fp2 {
-            c0: self.c0 * t,
-            c1: self.c1 * -t,
-        })
+        (self.c0.square() + self.c1.square())
+            ._invert()
+            .map(|t| Fp2 {
+                c0: self.c0 * t,
+                c1: self.c1 * -t,
+            })
+    }
+
+    pub fn invert(&self) -> CtOption<Self> {
+        #[cfg(target_os = "zkvm")]
+        {
+            // Compute the inverse using the zkvm syscall
+            unconstrained! {
+                let mut buf = [0u8; 96];
+                buf.copy_from_slice(&self._invert().unwrap().to_bytes());
+                hint_slice(&buf);
+            }
+
+            let byte_vec = read_vec();
+            let bytes: [u8; 96] = byte_vec.try_into().unwrap();
+            let inv = Fp2::from_bytes(&bytes).unwrap();
+            CtOption::new(inv, !self.is_zero() & (self * inv).ct_eq(&Fp2::one()))
+        }
+        #[cfg(not(target_os = "zkvm"))]
+        {
+            self._invert()
+        }
     }
 
     /// Although this is labeled "vartime", it is only

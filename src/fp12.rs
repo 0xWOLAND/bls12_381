@@ -6,6 +6,12 @@ use core::fmt;
 use core::ops::{Add, AddAssign, Mul, MulAssign, Neg, Sub, SubAssign};
 use subtle::{Choice, ConditionallySelectable, ConstantTimeEq, CtOption};
 
+#[cfg(target_os = "zkvm")]
+use sp1_lib::{
+    io::{hint_slice, read_vec},
+    unconstrained,
+};
+
 #[cfg(feature = "pairings")]
 use rand_core::RngCore;
 
@@ -294,13 +300,58 @@ impl Fp12 {
         Fp12 { c0, c1 }
     }
 
-    pub fn invert(&self) -> CtOption<Self> {
+    pub(crate) fn _invert(&self) -> CtOption<Self> {
         (self.c0.square() - self.c1.square().mul_by_nonresidue())
-            .invert()
+            ._invert()
             .map(|t| Fp12 {
                 c0: self.c0 * t,
                 c1: self.c1 * -t,
             })
+    }
+
+    #[inline]
+    pub fn invert(&self) -> CtOption<Self> {
+        #[cfg(target_os = "zkvm")]
+        {
+            // Compute the inverse using the zkvm syscall
+            unconstrained! {
+                let mut buf = [0u8; 576];
+                buf.copy_from_slice(&self._invert().unwrap().to_bytes());
+                hint_slice(&buf);
+            }
+
+            let byte_vec = read_vec();
+            let bytes: [u8; 576] = byte_vec.try_into().unwrap();
+            let inv = Fp12::from_bytes(&bytes).unwrap();
+            CtOption::new(inv, !self.is_zero() & (self * inv).ct_eq(&Fp12::one()))
+        }
+        #[cfg(not(target_os = "zkvm"))]
+        {
+            self._invert()
+        }
+    }
+
+    #[inline]
+    pub fn to_bytes(&self) -> [u8; 576] {
+        let mut res = [0; 576];
+        res[..288].copy_from_slice(&self.c0.to_bytes());
+        res[288..].copy_from_slice(&self.c1.to_bytes());
+        res
+    }
+
+    #[inline]
+    pub fn from_bytes(bytes: &[u8; 576]) -> CtOption<Fp12> {
+        let c0 = Fp6::from_bytes(&bytes[..288].try_into().unwrap());
+        let c1 = Fp6::from_bytes(&bytes[288..].try_into().unwrap());
+        let is_some = c0.is_some() & c1.is_some();
+
+        CtOption::new(
+            Fp12 {
+                c0: c0.unwrap(),
+                c1: c1.unwrap(),
+            },
+            is_some,
+        )
     }
 }
 

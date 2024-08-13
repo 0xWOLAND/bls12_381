@@ -8,6 +8,12 @@ use subtle::{Choice, ConditionallySelectable, ConstantTimeEq, CtOption};
 #[cfg(feature = "pairings")]
 use rand_core::RngCore;
 
+#[cfg(target_os = "zkvm")]
+use sp1_lib::{
+    io::{hint_slice, read_vec},
+    unconstrained,
+};
+
 /// This represents an element $c_0 + c_1 v + c_2 v^2$ of $\mathbb{F}_{p^6} = \mathbb{F}_{p^2} / v^3 - u - 1$.
 pub struct Fp6 {
     pub c0: Fp2,
@@ -428,7 +434,7 @@ impl Fp6 {
     }
 
     #[inline]
-    pub fn invert(&self) -> CtOption<Self> {
+    pub(crate) fn _invert(&self) -> CtOption<Self> {
         let c0 = (self.c1 * self.c2).mul_by_nonresidue();
         let c0 = self.c0.square() - c0;
 
@@ -441,11 +447,59 @@ impl Fp6 {
         let tmp = ((self.c1 * c2) + (self.c2 * c1)).mul_by_nonresidue();
         let tmp = tmp + (self.c0 * c0);
 
-        tmp.invert().map(|t| Fp6 {
+        tmp._invert().map(|t| Fp6 {
             c0: t * c0,
             c1: t * c1,
             c2: t * c2,
         })
+    }
+
+    #[inline]
+    pub fn invert(&self) -> CtOption<Self> {
+        #[cfg(target_os = "zkvm")]
+        {
+            // Compute the inverse using the zkvm syscall
+            unconstrained! {
+                let mut buf = [0u8; 288];
+                buf.copy_from_slice(&self._invert().unwrap().to_bytes());
+                hint_slice(&buf);
+            }
+
+            let byte_vec = read_vec();
+            let bytes: [u8; 288] = byte_vec.try_into().unwrap();
+            let inv = Fp6::from_bytes(&bytes).unwrap();
+            CtOption::new(inv, !self.is_zero() & (self * inv).ct_eq(&Fp6::one()))
+        }
+        #[cfg(not(target_os = "zkvm"))]
+        {
+            self._invert()
+        }
+    }
+
+    #[inline]
+    pub fn to_bytes(&self) -> [u8; 288] {
+        let mut res = [0; 288];
+        res[..96].copy_from_slice(&self.c0.to_bytes());
+        res[96..192].copy_from_slice(&self.c1.to_bytes());
+        res[192..].copy_from_slice(&self.c2.to_bytes());
+        res
+    }
+
+    #[inline]
+    pub fn from_bytes(bytes: &[u8; 288]) -> CtOption<Fp6> {
+        let c0 = Fp2::from_bytes(&bytes[..96].try_into().unwrap());
+        let c1 = Fp2::from_bytes(&bytes[96..192].try_into().unwrap());
+        let c2 = Fp2::from_bytes(&bytes[192..].try_into().unwrap());
+        let is_some = c0.is_some() & c1.is_some() & c2.is_some();
+
+        CtOption::new(
+            Fp6 {
+                c0: c0.unwrap(),
+                c1: c1.unwrap(),
+                c2: c2.unwrap(),
+            },
+            is_some,
+        )
     }
 }
 
