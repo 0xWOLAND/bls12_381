@@ -1,5 +1,6 @@
 //! This module provides an implementation of the $\mathbb{G}_1$ group of BLS12-381.
 
+use cfg_if::cfg_if;
 use core::borrow::Borrow;
 use core::fmt;
 use core::iter::Sum;
@@ -18,11 +19,12 @@ use crate::fp::Fp;
 use crate::Scalar;
 
 // Accelerated precompiles for zkvm. Defined directly to prevent circular dependency issues.
-#[cfg(target_os = "zkvm")]
-extern "C" {
-    fn syscall_bls12381_g1_decompress(p: &mut [u8; 96]);
-    fn syscall_bls12381_g1_add(p: *mut u32, q: *const u32);
-    fn syscall_bls12381_g1_double(p: *mut u32);
+cfg_if! {
+    if  #[cfg(target_os = "zkvm")] {
+        use sp1_lib::syscall_bls12381_decompress;
+        use sp1_lib::syscall_bls12381_double;
+        use sp1_lib::syscall_bls12381_add;
+    }
 }
 
 /// This is an element of $\mathbb{G}_1$ represented in the affine coordinate space.
@@ -338,7 +340,7 @@ impl G1Affine {
                 let mut decompressed_g1 = [0u8; 96];
                 decompressed_g1[..48].copy_from_slice(bytes);
                 unsafe {
-                    syscall_bls12381_g1_decompress(&mut decompressed_g1);
+                    syscall_bls12381_decompress(&mut decompressed_g1, bytes[0] != 0);
                 }
                 Self::from_uncompressed_unchecked(&decompressed_g1).and_then(|p| CtOption::new(p, p.is_torsion_free()))
             } else {
@@ -360,7 +362,7 @@ impl G1Affine {
                 let mut decompressed_g1 = [0u8; 96];
                 decompressed_g1[..48].copy_from_slice(bytes);
                 unsafe {
-                    syscall_bls12381_g1_decompress(&mut decompressed_g1);
+                    syscall_bls12381_decompress(&mut decompressed_g1, bytes[0] != 0);
                 }
                 Self::from_uncompressed_unchecked(&decompressed_g1)
             } else {
@@ -469,8 +471,9 @@ impl G1Affine {
                     let mut other = rhs.clone();
                     other.x.mul_r_inv_internal();
                     other.y.mul_r_inv_internal();
+                    println!("HERE ");
                     unsafe {
-                        syscall_bls12381_g1_add(res.x.0.as_mut_ptr() as *mut u32, other.x.0.as_ptr() as *const u32);
+                        syscall_bls12381_add(res.x.0.as_mut_ptr() as *mut [u32; 24], other.x.0.as_ptr() as *const [u32; 24]);
                     }
                     res.x.mul_r_internal();
                     res.y.mul_r_internal();
@@ -481,7 +484,7 @@ impl G1Affine {
                     res.x.mul_r_inv_internal();
                     res.y.mul_r_inv_internal();
                     unsafe {
-                        syscall_bls12381_g1_double(res.x.0.as_mut_ptr() as *mut u32);
+                        syscall_bls12381_double(res.x.0.as_mut_ptr() as *mut [u32; 24]);
                     }
                     res.x.mul_r_internal();
                     res.y.mul_r_internal();

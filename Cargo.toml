@@ -13,7 +13,7 @@ version = "0.8.0"
 edition = "2021"
 
 [package.metadata.docs.rs]
-rustdoc-args = [ "--html-in-header", "katex-header.html" ]
+rustdoc-args = ["--html-in-header", "katex-header.html"]
 
 [dev-dependencies]
 csv = ">= 1.0, < 1.2" # csv 1.2 has MSRV 1.60
@@ -65,6 +65,10 @@ default-features = false
 version = "1.4"
 default-features = false
 optional = true
+
+[dependencies.sp1-lib]
+git = "https://github.com/succinctlabs/sp1"
+branch = "experimental"
 
 [features]
 default = ["groups", "pairings", "alloc", "bits"]

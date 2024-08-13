@@ -1,6 +1,7 @@
 //! This module provides an implementation of the BLS12-381 base field `GF(p)`
 //! where `p = 0x1a0111ea397fe69a4b1ba7b6434bacd764774b84f38512bf6730d2a0f6b0f6241eabfffeb153ffffb9feffffffffaaab`
 
+use cfg_if::cfg_if;
 use core::fmt;
 use core::ops::{Add, AddAssign, Mul, MulAssign, Neg, Sub, SubAssign};
 use rand_core::RngCore;
@@ -9,11 +10,11 @@ use subtle::{Choice, ConditionallySelectable, ConstantTimeEq, CtOption};
 use crate::util::{adc, mac, sbb};
 
 // Accelerated precompiles for zkvm. Defined directly to prevent circular dependency issues.
-#[cfg(target_os = "zkvm")]
-extern "C" {
-    fn syscall_bls12381_fp_add(p: *mut u32, q: *const u32);
-    fn syscall_bls12381_fp_sub(p: *mut u32, q: *const u32);
-    fn syscall_bls12381_fp_mul(p: *mut u32, q: *const u32);
+cfg_if! {
+    if #[cfg(target_os = "zkvm")] {
+        use sp1_lib::{syscall_bls12381_fp_addmod, syscall_bls12381_fp_submod, syscall_bls12381_fp_mulmod };
+        use sp1_lib::{io::{hint_slice, read_vec}, unconstrained};
+    }
 }
 
 // The internal representation of this type is six 64-bit unsigned
@@ -323,6 +324,20 @@ impl Fp {
         Fp(v)
     }
 
+    pub(crate) fn pow_vartime_unconstrained(&self, by: &[u64; 6]) -> Self {
+        let mut res = Self::one();
+        for e in by.iter().rev() {
+            for i in (0..64).rev() {
+                res = res._mul(&res);
+
+                if ((*e >> i) & 1) == 1 {
+                    res = res._mul(self);
+                }
+            }
+        }
+        res
+    }
+
     /// Although this is labeled "vartime", it is only
     /// variable time with respect to the exponent. It
     /// is also not exposed in the public API.
@@ -341,7 +356,7 @@ impl Fp {
     }
 
     #[inline]
-    pub fn sqrt(&self) -> CtOption<Self> {
+    pub(crate) fn _sqrt(&self) -> CtOption<Self> {
         // We use Shank's method, as p = 3 (mod 4). This means
         // we only need to exponentiate by (p+1)/4. This only
         // works for elements that are actually quadratic residue,
@@ -360,12 +375,31 @@ impl Fp {
     }
 
     #[inline]
-    /// Computes the multiplicative inverse of this field
-    /// element, returning None in the case that this element
-    /// is zero.
-    pub fn invert(&self) -> CtOption<Self> {
+    pub fn sqrt(&self) -> CtOption<Self> {
+        #[cfg(target_os = "zkvm")]
+        {
+            // Compute the inverse using the zkvm syscall
+            unconstrained! {
+                let mut buf = [0u8; 48];
+                buf.copy_from_slice(&self._sqrt().unwrap().to_bytes());
+                hint_slice(&buf);
+            }
+
+            let byte_vec = read_vec();
+            let bytes: [u8; 48] = byte_vec.try_into().unwrap();
+            let root = Fp::from_bytes(&bytes).unwrap();
+            CtOption::new(root, !self.is_zero() & (root * root).ct_eq(self))
+        }
+        #[cfg(not(target_os = "zkvm"))]
+        {
+            self._sqrt()
+        }
+    }
+
+    #[inline]
+    pub(crate) fn _invert(&self) -> CtOption<Self> {
         // Exponentiate by p - 2
-        let t = self.pow_vartime(&[
+        let inv = self.pow_vartime_unconstrained(&[
             0xb9fe_ffff_ffff_aaa9,
             0x1eab_fffe_b153_ffff,
             0x6730_d2a0_f6b0_f624,
@@ -374,7 +408,28 @@ impl Fp {
             0x1a01_11ea_397f_e69a,
         ]);
 
-        CtOption::new(t, !self.is_zero())
+        CtOption::new(inv, !self.is_zero())
+    }
+
+    pub fn invert(&self) -> CtOption<Self> {
+        #[cfg(target_os = "zkvm")]
+        {
+            // Compute the inverse using the zkvm syscall
+            unconstrained! {
+                let mut buf = [0u8; 48];
+                buf.copy_from_slice(&self._invert().unwrap().to_bytes());
+                hint_slice(&buf);
+            }
+
+            let byte_vec = read_vec();
+            let bytes: [u8; 48] = byte_vec.try_into().unwrap();
+            let inv = Fp::from_bytes(&bytes).unwrap();
+            CtOption::new(inv, !self.is_zero() & (self * inv).ct_eq(&Fp::one()))
+        }
+        #[cfg(not(target_os = "zkvm"))]
+        {
+            self._invert()
+        }
     }
 
     #[inline]
@@ -402,11 +457,24 @@ impl Fp {
     #[cfg(target_os = "zkvm")]
     pub fn add_inp(&mut self, rhs: &Fp) {
         unsafe {
-            syscall_bls12381_fp_add(
+            syscall_bls12381_fp_addmod(
                 self.0.as_mut_ptr() as *mut u32,
                 rhs.0.as_ptr() as *const u32,
             );
         }
+    }
+
+    pub(crate) fn _add(&self, rhs: &Fp) -> Fp {
+        let (d0, carry) = adc(self.0[0], rhs.0[0], 0);
+        let (d1, carry) = adc(self.0[1], rhs.0[1], carry);
+        let (d2, carry) = adc(self.0[2], rhs.0[2], carry);
+        let (d3, carry) = adc(self.0[3], rhs.0[3], carry);
+        let (d4, carry) = adc(self.0[4], rhs.0[4], carry);
+        let (d5, _) = adc(self.0[5], rhs.0[5], carry);
+
+        // Attempt to subtract the modulus, to ensure the value
+        // is smaller than the modulus.
+        (&Fp([d0, d1, d2, d3, d4, d5])).subtract_p()
     }
 
     #[inline]
@@ -415,22 +483,37 @@ impl Fp {
             if #[cfg(target_os = "zkvm")] {
                 let mut out = self.clone();
                 unsafe {
-                    syscall_bls12381_fp_add(out.0.as_mut_ptr() as *mut u32, rhs.0.as_ptr() as *const u32);
+                    syscall_bls12381_fp_addmod(out.0.as_mut_ptr() as *mut u32, rhs.0.as_ptr() as *const u32);
                 }
                 out
             } else {
-                let (d0, carry) = adc(self.0[0], rhs.0[0], 0);
-                let (d1, carry) = adc(self.0[1], rhs.0[1], carry);
-                let (d2, carry) = adc(self.0[2], rhs.0[2], carry);
-                let (d3, carry) = adc(self.0[3], rhs.0[3], carry);
-                let (d4, carry) = adc(self.0[4], rhs.0[4], carry);
-                let (d5, _) = adc(self.0[5], rhs.0[5], carry);
-
-                // Attempt to subtract the modulus, to ensure the value
-                // is smaller than the modulus.
-                (&Fp([d0, d1, d2, d3, d4, d5])).subtract_p()
+                self._add(rhs)
             }
         }
+    }
+
+    pub(crate) fn _neg(&self) -> Fp {
+        let (d0, borrow) = sbb(MODULUS[0], self.0[0], 0);
+        let (d1, borrow) = sbb(MODULUS[1], self.0[1], borrow);
+        let (d2, borrow) = sbb(MODULUS[2], self.0[2], borrow);
+        let (d3, borrow) = sbb(MODULUS[3], self.0[3], borrow);
+        let (d4, borrow) = sbb(MODULUS[4], self.0[4], borrow);
+        let (d5, _) = sbb(MODULUS[5], self.0[5], borrow);
+
+        // Let's use a mask if `self` was zero, which would mean
+        // the result of the subtraction is p.
+        let mask = (((self.0[0] | self.0[1] | self.0[2] | self.0[3] | self.0[4] | self.0[5]) == 0)
+            as u64)
+            .wrapping_sub(1);
+
+        Fp([
+            d0 & mask,
+            d1 & mask,
+            d2 & mask,
+            d3 & mask,
+            d4 & mask,
+            d5 & mask,
+        ])
     }
 
     #[inline]
@@ -439,31 +522,11 @@ impl Fp {
             if #[cfg(target_os = "zkvm")] {
                 let mut out = Fp::zero();
                 unsafe {
-                    syscall_bls12381_fp_sub(out.0.as_mut_ptr() as *mut u32, self.0.as_ptr() as *const u32);
+                    syscall_bls12381_fp_submod(out.0.as_mut_ptr() as *mut u32, self.0.as_ptr() as *const u32);
                 }
                 out
             } else {
-                let (d0, borrow) = sbb(MODULUS[0], self.0[0], 0);
-                let (d1, borrow) = sbb(MODULUS[1], self.0[1], borrow);
-                let (d2, borrow) = sbb(MODULUS[2], self.0[2], borrow);
-                let (d3, borrow) = sbb(MODULUS[3], self.0[3], borrow);
-                let (d4, borrow) = sbb(MODULUS[4], self.0[4], borrow);
-                let (d5, _) = sbb(MODULUS[5], self.0[5], borrow);
-
-                // Let's use a mask if `self` was zero, which would mean
-                // the result of the subtraction is p.
-                let mask = (((self.0[0] | self.0[1] | self.0[2] | self.0[3] | self.0[4] | self.0[5]) == 0)
-                            as u64)
-                    .wrapping_sub(1);
-
-                Fp([
-                    d0 & mask,
-                    d1 & mask,
-                    d2 & mask,
-                    d3 & mask,
-                    d4 & mask,
-                    d5 & mask,
-                ])
+                self._neg()
             }
         }
     }
@@ -472,7 +535,7 @@ impl Fp {
     #[cfg(target_os = "zkvm")]
     pub fn sub_inp(&mut self, rhs: &Fp) {
         unsafe {
-            syscall_bls12381_fp_sub(
+            syscall_bls12381_fp_submod(
                 self.0.as_mut_ptr() as *mut u32,
                 rhs.0.as_ptr() as *const u32,
             );
@@ -485,7 +548,7 @@ impl Fp {
             if #[cfg(target_os = "zkvm")] {
                 let mut out = self.clone();
                 unsafe {
-                    syscall_bls12381_fp_sub(out.0.as_mut_ptr() as *mut u32, rhs.0.as_ptr() as *const u32);
+                    syscall_bls12381_fp_submod(out.0.as_mut_ptr() as *mut u32, rhs.0.as_ptr() as *const u32);
                 }
                 out
             } else {
@@ -652,7 +715,7 @@ impl Fp {
     #[cfg(target_os = "zkvm")]
     pub fn mul_inp(&mut self, rhs: &Fp) {
         unsafe {
-            syscall_bls12381_fp_mul(
+            syscall_bls12381_fp_mulmod(
                 self.0.as_mut_ptr() as *mut u32,
                 rhs.0.as_ptr() as *const u32,
             );
@@ -661,59 +724,64 @@ impl Fp {
     }
 
     #[inline]
+    pub(crate) fn _mul(&self, rhs: &Fp) -> Fp {
+        let (t0, carry) = mac(0, self.0[0], rhs.0[0], 0);
+        let (t1, carry) = mac(0, self.0[0], rhs.0[1], carry);
+        let (t2, carry) = mac(0, self.0[0], rhs.0[2], carry);
+        let (t3, carry) = mac(0, self.0[0], rhs.0[3], carry);
+        let (t4, carry) = mac(0, self.0[0], rhs.0[4], carry);
+        let (t5, t6) = mac(0, self.0[0], rhs.0[5], carry);
+
+        let (t1, carry) = mac(t1, self.0[1], rhs.0[0], 0);
+        let (t2, carry) = mac(t2, self.0[1], rhs.0[1], carry);
+        let (t3, carry) = mac(t3, self.0[1], rhs.0[2], carry);
+        let (t4, carry) = mac(t4, self.0[1], rhs.0[3], carry);
+        let (t5, carry) = mac(t5, self.0[1], rhs.0[4], carry);
+        let (t6, t7) = mac(t6, self.0[1], rhs.0[5], carry);
+
+        let (t2, carry) = mac(t2, self.0[2], rhs.0[0], 0);
+        let (t3, carry) = mac(t3, self.0[2], rhs.0[1], carry);
+        let (t4, carry) = mac(t4, self.0[2], rhs.0[2], carry);
+        let (t5, carry) = mac(t5, self.0[2], rhs.0[3], carry);
+        let (t6, carry) = mac(t6, self.0[2], rhs.0[4], carry);
+        let (t7, t8) = mac(t7, self.0[2], rhs.0[5], carry);
+
+        let (t3, carry) = mac(t3, self.0[3], rhs.0[0], 0);
+        let (t4, carry) = mac(t4, self.0[3], rhs.0[1], carry);
+        let (t5, carry) = mac(t5, self.0[3], rhs.0[2], carry);
+        let (t6, carry) = mac(t6, self.0[3], rhs.0[3], carry);
+        let (t7, carry) = mac(t7, self.0[3], rhs.0[4], carry);
+        let (t8, t9) = mac(t8, self.0[3], rhs.0[5], carry);
+
+        let (t4, carry) = mac(t4, self.0[4], rhs.0[0], 0);
+        let (t5, carry) = mac(t5, self.0[4], rhs.0[1], carry);
+        let (t6, carry) = mac(t6, self.0[4], rhs.0[2], carry);
+        let (t7, carry) = mac(t7, self.0[4], rhs.0[3], carry);
+        let (t8, carry) = mac(t8, self.0[4], rhs.0[4], carry);
+        let (t9, t10) = mac(t9, self.0[4], rhs.0[5], carry);
+
+        let (t5, carry) = mac(t5, self.0[5], rhs.0[0], 0);
+        let (t6, carry) = mac(t6, self.0[5], rhs.0[1], carry);
+        let (t7, carry) = mac(t7, self.0[5], rhs.0[2], carry);
+        let (t8, carry) = mac(t8, self.0[5], rhs.0[3], carry);
+        let (t9, carry) = mac(t9, self.0[5], rhs.0[4], carry);
+        let (t10, t11) = mac(t10, self.0[5], rhs.0[5], carry);
+
+        Self::montgomery_reduce(t0, t1, t2, t3, t4, t5, t6, t7, t8, t9, t10, t11)
+    }
+
+    #[inline]
     pub fn mul(&self, rhs: &Fp) -> Fp {
         cfg_if::cfg_if! {
             if #[cfg(target_os = "zkvm")] {
                 let mut out = self.clone();
                 unsafe {
-                    syscall_bls12381_fp_mul(out.0.as_mut_ptr() as *mut u32, rhs.0.as_ptr() as *const u32);
+                    syscall_bls12381_fp_mulmod(out.0.as_mut_ptr() as *mut u32, rhs.0.as_ptr() as *const u32);
                 }
                 out.mul_r_inv_internal();
                 out
             } else {
-                let (t0, carry) = mac(0, self.0[0], rhs.0[0], 0);
-                let (t1, carry) = mac(0, self.0[0], rhs.0[1], carry);
-                let (t2, carry) = mac(0, self.0[0], rhs.0[2], carry);
-                let (t3, carry) = mac(0, self.0[0], rhs.0[3], carry);
-                let (t4, carry) = mac(0, self.0[0], rhs.0[4], carry);
-                let (t5, t6) = mac(0, self.0[0], rhs.0[5], carry);
-
-                let (t1, carry) = mac(t1, self.0[1], rhs.0[0], 0);
-                let (t2, carry) = mac(t2, self.0[1], rhs.0[1], carry);
-                let (t3, carry) = mac(t3, self.0[1], rhs.0[2], carry);
-                let (t4, carry) = mac(t4, self.0[1], rhs.0[3], carry);
-                let (t5, carry) = mac(t5, self.0[1], rhs.0[4], carry);
-                let (t6, t7) = mac(t6, self.0[1], rhs.0[5], carry);
-
-                let (t2, carry) = mac(t2, self.0[2], rhs.0[0], 0);
-                let (t3, carry) = mac(t3, self.0[2], rhs.0[1], carry);
-                let (t4, carry) = mac(t4, self.0[2], rhs.0[2], carry);
-                let (t5, carry) = mac(t5, self.0[2], rhs.0[3], carry);
-                let (t6, carry) = mac(t6, self.0[2], rhs.0[4], carry);
-                let (t7, t8) = mac(t7, self.0[2], rhs.0[5], carry);
-
-                let (t3, carry) = mac(t3, self.0[3], rhs.0[0], 0);
-                let (t4, carry) = mac(t4, self.0[3], rhs.0[1], carry);
-                let (t5, carry) = mac(t5, self.0[3], rhs.0[2], carry);
-                let (t6, carry) = mac(t6, self.0[3], rhs.0[3], carry);
-                let (t7, carry) = mac(t7, self.0[3], rhs.0[4], carry);
-                let (t8, t9) = mac(t8, self.0[3], rhs.0[5], carry);
-
-                let (t4, carry) = mac(t4, self.0[4], rhs.0[0], 0);
-                let (t5, carry) = mac(t5, self.0[4], rhs.0[1], carry);
-                let (t6, carry) = mac(t6, self.0[4], rhs.0[2], carry);
-                let (t7, carry) = mac(t7, self.0[4], rhs.0[3], carry);
-                let (t8, carry) = mac(t8, self.0[4], rhs.0[4], carry);
-                let (t9, t10) = mac(t9, self.0[4], rhs.0[5], carry);
-
-                let (t5, carry) = mac(t5, self.0[5], rhs.0[0], 0);
-                let (t6, carry) = mac(t6, self.0[5], rhs.0[1], carry);
-                let (t7, carry) = mac(t7, self.0[5], rhs.0[2], carry);
-                let (t8, carry) = mac(t8, self.0[5], rhs.0[3], carry);
-                let (t9, carry) = mac(t9, self.0[5], rhs.0[4], carry);
-                let (t10, t11) = mac(t10, self.0[5], rhs.0[5], carry);
-
-                Self::montgomery_reduce(t0, t1, t2, t3, t4, t5, t6, t7, t8, t9, t10, t11)
+                self._mul(rhs)
             }
         }
     }
@@ -725,7 +793,7 @@ impl Fp {
     #[cfg(target_os = "zkvm")]
     pub(crate) fn mul_r_inv_internal(&mut self) {
         unsafe {
-            syscall_bls12381_fp_mul(
+            syscall_bls12381_fp_mulmod(
                 self.0.as_mut_ptr() as *mut u32,
                 R_INV.0.as_ptr() as *const u32,
             );
@@ -739,7 +807,7 @@ impl Fp {
     #[cfg(target_os = "zkvm")]
     pub(crate) fn mul_r_internal(&mut self) {
         unsafe {
-            syscall_bls12381_fp_mul(self.0.as_mut_ptr() as *mut u32, R.0.as_ptr() as *const u32);
+            syscall_bls12381_fp_mulmod(self.0.as_mut_ptr() as *mut u32, R.0.as_ptr() as *const u32);
         }
     }
 
@@ -747,7 +815,7 @@ impl Fp {
     #[cfg(target_os = "zkvm")]
     pub fn square_inp(&mut self) {
         unsafe {
-            syscall_bls12381_fp_mul(
+            syscall_bls12381_fp_mulmod(
                 self.0.as_mut_ptr() as *mut u32,
                 self.0.as_ptr() as *const u32,
             );
@@ -762,7 +830,7 @@ impl Fp {
             if #[cfg(target_os = "zkvm")] {
                 let mut out = self.clone();
                 unsafe {
-                    syscall_bls12381_fp_mul(out.0.as_mut_ptr() as *mut u32, self.0.as_ptr() as *const u32);
+                    syscall_bls12381_fp_mulmod(out.0.as_mut_ptr() as *mut u32, self.0.as_ptr() as *const u32);
                 }
                 out.mul_r_inv_internal();
                 out

@@ -6,14 +6,8 @@ use rand_core::RngCore;
 use subtle::{Choice, ConditionallySelectable, ConstantTimeEq, CtOption};
 
 use crate::fp::Fp;
-
-// Accelerated precompiles for zkvm. Defined directly to prevent circular dependency issues.
 #[cfg(target_os = "zkvm")]
-extern "C" {
-    fn syscall_bls12381_fp2_add(p: *mut u32, q: *const u32);
-    fn syscall_bls12381_fp2_sub(p: *mut u32, q: *const u32);
-    fn syscall_bls12381_fp2_mul(p: *mut u32, q: *const u32);
-}
+use sp1_lib::*;
 
 #[derive(Copy, Clone)]
 #[repr(C)] // NOTE: this is technically required for ensuring the memory layout used in the zkvm precompiles is valid
@@ -174,6 +168,13 @@ impl Fp2 {
         self.c1 = -self.c1;
     }
 
+    pub const fn non_residue() -> Fp2 {
+        Fp2 {
+            c0: Fp::one(),
+            c1: Fp::one(),
+        }
+    }
+
     #[inline]
     #[cfg(target_os = "zkvm")]
     pub fn mul_by_nonresidue_inp(&mut self) {
@@ -182,9 +183,10 @@ impl Fp2 {
         // and because u^2 = -1, we get
         // (a - b) + (a + b)u
 
-        let tmp = self.c0 + self.c1;
-        self.c0.sub_inp(&self.c1);
-        self.c1 = tmp;
+        // let tmp = self.c0 + self.c1;
+        // self.c0.sub_inp(&self.c1);
+        // self.c1 = tmp;
+        self.mul_inp(&Fp2::non_residue())
     }
 
     #[inline(always)]
@@ -228,7 +230,7 @@ impl Fp2 {
     #[cfg(target_os = "zkvm")]
     pub fn square_inp(&mut self) {
         unsafe {
-            syscall_bls12381_fp2_mul(
+            syscall_bls12381_fp2_mulmod(
                 self.c0.0.as_mut_ptr() as *mut u32,
                 self.c0.0.as_ptr() as *const u32,
             );
@@ -241,7 +243,7 @@ impl Fp2 {
             if #[cfg(target_os = "zkvm")] {
                 let mut out = self.clone();
                 unsafe {
-                    syscall_bls12381_fp2_mul(out.c0.0.as_mut_ptr() as *mut u32, self.c0.0.as_ptr() as *const u32);
+                    syscall_bls12381_fp2_mulmod(out.c0.0.as_mut_ptr() as *mut u32, self.c0.0.as_ptr() as *const u32);
                 }
                 out.mul_r_inv_internal();
                 out
@@ -274,7 +276,7 @@ impl Fp2 {
     #[cfg(target_os = "zkvm")]
     pub fn mul_inp(&mut self, rhs: &Fp2) {
         unsafe {
-            syscall_bls12381_fp2_mul(
+            syscall_bls12381_fp2_mulmod(
                 self.c0.0.as_mut_ptr() as *mut u32,
                 rhs.c0.0.as_ptr() as *const u32,
             );
@@ -287,7 +289,7 @@ impl Fp2 {
             if #[cfg(target_os = "zkvm")] {
                 let mut out = self.clone();
                 unsafe {
-                    syscall_bls12381_fp2_mul(out.c0.0.as_mut_ptr() as *mut u32, rhs.c0.0.as_ptr() as *const u32);
+                    syscall_bls12381_fp2_mulmod(out.c0.0.as_mut_ptr() as *mut u32, rhs.c0.0.as_ptr() as *const u32);
                 }
                 out.mul_r_inv_internal();
                 out
@@ -316,7 +318,7 @@ impl Fp2 {
     #[cfg(target_os = "zkvm")]
     pub fn add_inp(&mut self, rhs: &Fp2) {
         unsafe {
-            syscall_bls12381_fp2_add(
+            syscall_bls12381_fp2_addmod(
                 self.c0.0.as_mut_ptr() as *mut u32,
                 rhs.c0.0.as_ptr() as *const u32,
             );
@@ -327,7 +329,7 @@ impl Fp2 {
     #[cfg(target_os = "zkvm")]
     pub fn double_inp(&mut self) {
         unsafe {
-            syscall_bls12381_fp2_add(
+            syscall_bls12381_fp2_addmod(
                 self.c0.0.as_mut_ptr() as *mut u32,
                 self.c0.0.as_ptr() as *const u32,
             );
@@ -339,7 +341,7 @@ impl Fp2 {
             if #[cfg(target_os = "zkvm")] {
                 let mut out = self.clone();
                 unsafe {
-                    syscall_bls12381_fp2_add(out.c0.0.as_mut_ptr() as *mut u32, rhs.c0.0.as_ptr() as *const u32);
+                    syscall_bls12381_fp2_addmod(out.c0.0.as_mut_ptr() as *mut u32, rhs.c0.0.as_ptr() as *const u32);
                 }
                 out
             } else {
@@ -355,7 +357,7 @@ impl Fp2 {
     #[cfg(target_os = "zkvm")]
     pub fn sub_inp(&mut self, rhs: &Fp2) {
         unsafe {
-            syscall_bls12381_fp2_sub(
+            syscall_bls12381_fp2_submod(
                 self.c0.0.as_mut_ptr() as *mut u32,
                 rhs.c0.0.as_ptr() as *const u32,
             );
@@ -367,7 +369,7 @@ impl Fp2 {
             if #[cfg(target_os = "zkvm")] {
                 let mut out = self.clone();
                 unsafe {
-                    syscall_bls12381_fp2_sub(out.c0.0.as_mut_ptr() as *mut u32, rhs.c0.0.as_ptr() as *const u32);
+                    syscall_bls12381_fp2_submod(out.c0.0.as_mut_ptr() as *mut u32, rhs.c0.0.as_ptr() as *const u32);
                 }
                 out
             } else {
@@ -384,7 +386,7 @@ impl Fp2 {
             if #[cfg(target_os = "zkvm")] {
                 let mut out = Fp2::zero();
                 unsafe {
-                    syscall_bls12381_fp2_sub(out.c0.0.as_mut_ptr() as *mut u32, self.c0.0.as_ptr() as *const u32);
+                    syscall_bls12381_fp2_submod(out.c0.0.as_mut_ptr() as *mut u32, self.c0.0.as_ptr() as *const u32);
                 }
                 out
             } else {
