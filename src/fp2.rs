@@ -480,21 +480,21 @@ impl Fp2 {
 
     #[inline]
     pub fn sqrt(&self) -> CtOption<Self> {
-        #[cfg(target_os = "zkvm")]
-        {
-            // Compute the inverse using the zkvm syscall
-            unconstrained! {
-                let mut buf = [0u8; 96];
-                buf.copy_from_slice(&self._sqrt().unwrap().to_bytes());
-                hint_slice(&buf);
-            }
+        // #[cfg(target_os = "zkvm")]
+        // {
+        //     // Compute the inverse using the zkvm syscall
+        //     unconstrained! {
+        //         let mut buf = [0u8; 96];
+        //         buf.copy_from_slice(&self._sqrt().unwrap().to_bytes());
+        //         hint_slice(&buf);
+        //     }
 
-            let byte_vec = read_vec();
-            let bytes: [u8; 96] = byte_vec.try_into().unwrap();
-            let root = Fp2::from_bytes(&bytes).unwrap();
-            CtOption::new(root, !self.is_zero() & (root * root).ct_eq(self))
-        }
-        #[cfg(not(target_os = "zkvm"))]
+        //     let byte_vec = read_vec();
+        //     let bytes: [u8; 96] = byte_vec.try_into().unwrap();
+        //     let root = Fp2::from_bytes(&bytes).unwrap();
+        //     CtOption::new(root, !self.is_zero() & (root * root).ct_eq(self))
+        // }
+        // #[cfg(not(target_os = "zkvm"))]
         {
             self._sqrt()
         }
@@ -527,21 +527,21 @@ impl Fp2 {
     }
 
     pub fn invert(&self) -> CtOption<Self> {
-        #[cfg(target_os = "zkvm")]
-        {
-            // Compute the inverse using the zkvm syscall
-            unconstrained! {
-                let mut buf = [0u8; 96];
-                buf.copy_from_slice(&self._invert().unwrap().to_bytes());
-                hint_slice(&buf);
-            }
+        // #[cfg(target_os = "zkvm")]
+        // {
+        //     // Compute the inverse using the zkvm syscall
+        //     unconstrained! {
+        //         let mut buf = [0u8; 96];
+        //         buf.copy_from_slice(&self._invert().unwrap().to_bytes());
+        //         hint_slice(&buf);
+        //     }
 
-            let byte_vec = read_vec();
-            let bytes: [u8; 96] = byte_vec.try_into().unwrap();
-            let inv = Fp2::from_bytes(&bytes).unwrap();
-            CtOption::new(inv, !self.is_zero() & (self * inv).ct_eq(&Fp2::one()))
-        }
-        #[cfg(not(target_os = "zkvm"))]
+        //     let byte_vec = read_vec();
+        //     let bytes: [u8; 96] = byte_vec.try_into().unwrap();
+        //     let inv = Fp2::from_bytes(&bytes).unwrap();
+        //     CtOption::new(inv, !self.is_zero() & (self * inv).ct_eq(&Fp2::one()))
+        // }
+        // #[cfg(not(target_os = "zkvm"))]
         {
             self._invert()
         }

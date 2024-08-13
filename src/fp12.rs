@@ -311,21 +311,21 @@ impl Fp12 {
 
     #[inline]
     pub fn invert(&self) -> CtOption<Self> {
-        #[cfg(target_os = "zkvm")]
-        {
-            // Compute the inverse using the zkvm syscall
-            unconstrained! {
-                let mut buf = [0u8; 576];
-                buf.copy_from_slice(&self._invert().unwrap().to_bytes());
-                hint_slice(&buf);
-            }
+        // #[cfg(target_os = "zkvm")]
+        // {
+        //     // Compute the inverse using the zkvm syscall
+        //     unconstrained! {
+        //         let mut buf = [0u8; 576];
+        //         buf.copy_from_slice(&self._invert().unwrap().to_bytes());
+        //         hint_slice(&buf);
+        //     }
 
-            let byte_vec = read_vec();
-            let bytes: [u8; 576] = byte_vec.try_into().unwrap();
-            let inv = Fp12::from_bytes(&bytes).unwrap();
-            CtOption::new(inv, !self.is_zero() & (self * inv).ct_eq(&Fp12::one()))
-        }
-        #[cfg(not(target_os = "zkvm"))]
+        //     let byte_vec = read_vec();
+        //     let bytes: [u8; 576] = byte_vec.try_into().unwrap();
+        //     let inv = Fp12::from_bytes(&bytes).unwrap();
+        //     CtOption::new(inv, !self.is_zero() & (self * inv).ct_eq(&Fp12::one()))
+        // }
+        // #[cfg(not(target_os = "zkvm"))]
         {
             self._invert()
         }

@@ -456,21 +456,21 @@ impl Fp6 {
 
     #[inline]
     pub fn invert(&self) -> CtOption<Self> {
-        #[cfg(target_os = "zkvm")]
-        {
-            // Compute the inverse using the zkvm syscall
-            unconstrained! {
-                let mut buf = [0u8; 288];
-                buf.copy_from_slice(&self._invert().unwrap().to_bytes());
-                hint_slice(&buf);
-            }
+        // #[cfg(target_os = "zkvm")]
+        // {
+        //     // Compute the inverse using the zkvm syscall
+        //     unconstrained! {
+        //         let mut buf = [0u8; 288];
+        //         buf.copy_from_slice(&self._invert().unwrap().to_bytes());
+        //         hint_slice(&buf);
+        //     }
 
-            let byte_vec = read_vec();
-            let bytes: [u8; 288] = byte_vec.try_into().unwrap();
-            let inv = Fp6::from_bytes(&bytes).unwrap();
-            CtOption::new(inv, !self.is_zero() & (self * inv).ct_eq(&Fp6::one()))
-        }
-        #[cfg(not(target_os = "zkvm"))]
+        //     let byte_vec = read_vec();
+        //     let bytes: [u8; 288] = byte_vec.try_into().unwrap();
+        //     let inv = Fp6::from_bytes(&bytes).unwrap();
+        //     CtOption::new(inv, !self.is_zero() & (self * inv).ct_eq(&Fp6::one()))
+        // }
+        // #[cfg(not(target_os = "zkvm"))]
         {
             self._invert()
         }
