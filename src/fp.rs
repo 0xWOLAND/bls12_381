@@ -371,26 +371,34 @@ impl Fp {
             0x0680_447a_8e5f_f9a6,
         ]);
 
-        CtOption::new(sqrt, sqrt.square().ct_eq(self))
+        CtOption::new(sqrt, sqrt._square().ct_eq(self))
     }
 
     #[inline]
     pub fn sqrt(&self) -> CtOption<Self> {
-        // #[cfg(target_os = "zkvm")]
-        // {
-        //     // Compute the inverse using the zkvm syscall
-        //     unconstrained! {
-        //         let mut buf = [0u8; 48];
-        //         buf.copy_from_slice(&self._sqrt().unwrap().to_bytes());
-        //         hint_slice(&buf);
-        //     }
+        #[cfg(target_os = "zkvm")]
+        {
+            // Compute the square root using the zkvm syscall
+            unconstrained! {
+                let mut buf = [0u8; 49]; // Allocate 49 bytes to include the flag
+                self._sqrt().map(|root| {
+                    buf[0..48].copy_from_slice(&root.to_bytes());
+                    buf[48] = 1; // Set the flag to 1 indicating the result is valid
+                });
+                hint_slice(&buf);
+            }
 
-        //     let byte_vec = read_vec();
-        //     let bytes: [u8; 48] = byte_vec.try_into().unwrap();
-        //     let root = Fp::from_bytes(&bytes).unwrap();
-        //     CtOption::new(root, !self.is_zero() & (root._mul(&root)).ct_eq(self))
-        // }
-        // #[cfg(not(target_os = "zkvm"))]
+            let byte_vec = read_vec();
+            let bytes: [u8; 49] = byte_vec.try_into().unwrap();
+            match bytes[48] {
+                0 => CtOption::new(Fp::zero(), Choice::from(0u8)), // Return None if the flag is 0
+                _ => {
+                    let root = Fp::from_bytes(&bytes[0..48].try_into().unwrap()).unwrap();
+                    CtOption::new(root, !self.is_zero() & (root * root).ct_eq(self))
+                }
+            }
+        }
+        #[cfg(not(target_os = "zkvm"))]
         {
             self._sqrt()
         }
@@ -412,21 +420,29 @@ impl Fp {
     }
 
     pub fn invert(&self) -> CtOption<Self> {
-        // #[cfg(target_os = "zkvm")]
-        // {
-        //     // Compute the inverse using the zkvm syscall
-        //     unconstrained! {
-        //         let mut buf = [0u8; 48];
-        //         buf.copy_from_slice(&self._invert().unwrap().to_bytes());
-        //         hint_slice(&buf);
-        //     }
+        #[cfg(target_os = "zkvm")]
+        {
+            // Compute the inverse using the zkvm syscall
+            unconstrained! {
+                let mut buf = [0u8; 49];
+                self._invert().map(|inv| {
+                    buf[0..48].copy_from_slice(&inv.to_bytes());
+                    buf[48] = 1;
+                });
+                hint_slice(&buf);
+            }
 
-        //     let byte_vec = read_vec();
-        //     let bytes: [u8; 48] = byte_vec.try_into().unwrap();
-        //     let inv = Fp::from_bytes(&bytes).unwrap();
-        //     CtOption::new(inv, !self.is_zero() & (self * inv).ct_eq(&Fp::one()))
-        // }
-        // #[cfg(not(target_os = "zkvm"))]
+            let byte_vec = read_vec();
+            let bytes: [u8; 49] = byte_vec.try_into().unwrap();
+            match bytes[48] {
+                0 => CtOption::new(Fp::zero(), Choice::from(0u8)),
+                _ => {
+                    let inv = Fp::from_bytes(&bytes[0..48].try_into().unwrap()).unwrap();
+                    CtOption::new(inv, !self.is_zero() & (self * inv).ct_eq(&Fp::one()))
+                }
+            }
+        }
+        #[cfg(not(target_os = "zkvm"))]
         {
             self._invert()
         }
@@ -823,6 +839,55 @@ impl Fp {
         self.mul_r_inv_internal();
     }
 
+    pub(crate) fn _square(&self) -> Self {
+        let (t1, carry) = mac(0, self.0[0], self.0[1], 0);
+        let (t2, carry) = mac(0, self.0[0], self.0[2], carry);
+        let (t3, carry) = mac(0, self.0[0], self.0[3], carry);
+        let (t4, carry) = mac(0, self.0[0], self.0[4], carry);
+        let (t5, t6) = mac(0, self.0[0], self.0[5], carry);
+
+        let (t3, carry) = mac(t3, self.0[1], self.0[2], 0);
+        let (t4, carry) = mac(t4, self.0[1], self.0[3], carry);
+        let (t5, carry) = mac(t5, self.0[1], self.0[4], carry);
+        let (t6, t7) = mac(t6, self.0[1], self.0[5], carry);
+
+        let (t5, carry) = mac(t5, self.0[2], self.0[3], 0);
+        let (t6, carry) = mac(t6, self.0[2], self.0[4], carry);
+        let (t7, t8) = mac(t7, self.0[2], self.0[5], carry);
+
+        let (t7, carry) = mac(t7, self.0[3], self.0[4], 0);
+        let (t8, t9) = mac(t8, self.0[3], self.0[5], carry);
+
+        let (t9, t10) = mac(t9, self.0[4], self.0[5], 0);
+
+        let t11 = t10 >> 63;
+        let t10 = (t10 << 1) | (t9 >> 63);
+        let t9 = (t9 << 1) | (t8 >> 63);
+        let t8 = (t8 << 1) | (t7 >> 63);
+        let t7 = (t7 << 1) | (t6 >> 63);
+        let t6 = (t6 << 1) | (t5 >> 63);
+        let t5 = (t5 << 1) | (t4 >> 63);
+        let t4 = (t4 << 1) | (t3 >> 63);
+        let t3 = (t3 << 1) | (t2 >> 63);
+        let t2 = (t2 << 1) | (t1 >> 63);
+        let t1 = t1 << 1;
+
+        let (t0, carry) = mac(0, self.0[0], self.0[0], 0);
+        let (t1, carry) = adc(t1, 0, carry);
+        let (t2, carry) = mac(t2, self.0[1], self.0[1], carry);
+        let (t3, carry) = adc(t3, 0, carry);
+        let (t4, carry) = mac(t4, self.0[2], self.0[2], carry);
+        let (t5, carry) = adc(t5, 0, carry);
+        let (t6, carry) = mac(t6, self.0[3], self.0[3], carry);
+        let (t7, carry) = adc(t7, 0, carry);
+        let (t8, carry) = mac(t8, self.0[4], self.0[4], carry);
+        let (t9, carry) = adc(t9, 0, carry);
+        let (t10, carry) = mac(t10, self.0[5], self.0[5], carry);
+        let (t11, _) = adc(t11, 0, carry);
+
+        Self::montgomery_reduce(t0, t1, t2, t3, t4, t5, t6, t7, t8, t9, t10, t11)
+    }
+
     /// Squares this element.
     #[inline]
     pub fn square(&self) -> Self {
@@ -835,52 +900,7 @@ impl Fp {
                 out.mul_r_inv_internal();
                 out
             } else {
-                let (t1, carry) = mac(0, self.0[0], self.0[1], 0);
-                let (t2, carry) = mac(0, self.0[0], self.0[2], carry);
-                let (t3, carry) = mac(0, self.0[0], self.0[3], carry);
-                let (t4, carry) = mac(0, self.0[0], self.0[4], carry);
-                let (t5, t6) = mac(0, self.0[0], self.0[5], carry);
-
-                let (t3, carry) = mac(t3, self.0[1], self.0[2], 0);
-                let (t4, carry) = mac(t4, self.0[1], self.0[3], carry);
-                let (t5, carry) = mac(t5, self.0[1], self.0[4], carry);
-                let (t6, t7) = mac(t6, self.0[1], self.0[5], carry);
-
-                let (t5, carry) = mac(t5, self.0[2], self.0[3], 0);
-                let (t6, carry) = mac(t6, self.0[2], self.0[4], carry);
-                let (t7, t8) = mac(t7, self.0[2], self.0[5], carry);
-
-                let (t7, carry) = mac(t7, self.0[3], self.0[4], 0);
-                let (t8, t9) = mac(t8, self.0[3], self.0[5], carry);
-
-                let (t9, t10) = mac(t9, self.0[4], self.0[5], 0);
-
-                let t11 = t10 >> 63;
-                let t10 = (t10 << 1) | (t9 >> 63);
-                let t9 = (t9 << 1) | (t8 >> 63);
-                let t8 = (t8 << 1) | (t7 >> 63);
-                let t7 = (t7 << 1) | (t6 >> 63);
-                let t6 = (t6 << 1) | (t5 >> 63);
-                let t5 = (t5 << 1) | (t4 >> 63);
-                let t4 = (t4 << 1) | (t3 >> 63);
-                let t3 = (t3 << 1) | (t2 >> 63);
-                let t2 = (t2 << 1) | (t1 >> 63);
-                let t1 = t1 << 1;
-
-                let (t0, carry) = mac(0, self.0[0], self.0[0], 0);
-                let (t1, carry) = adc(t1, 0, carry);
-                let (t2, carry) = mac(t2, self.0[1], self.0[1], carry);
-                let (t3, carry) = adc(t3, 0, carry);
-                let (t4, carry) = mac(t4, self.0[2], self.0[2], carry);
-                let (t5, carry) = adc(t5, 0, carry);
-                let (t6, carry) = mac(t6, self.0[3], self.0[3], carry);
-                let (t7, carry) = adc(t7, 0, carry);
-                let (t8, carry) = mac(t8, self.0[4], self.0[4], carry);
-                let (t9, carry) = adc(t9, 0, carry);
-                let (t10, carry) = mac(t10, self.0[5], self.0[5], carry);
-                let (t11, _) = adc(t11, 0, carry);
-
-                Self::montgomery_reduce(t0, t1, t2, t3, t4, t5, t6, t7, t8, t9, t10, t11)
+                self._square()
             }
         }
     }

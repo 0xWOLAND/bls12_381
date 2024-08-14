@@ -266,6 +266,29 @@ impl Fp2 {
         self.mul_r_inv_internal();
     }
 
+    fn _square(&self) -> Fp2 {
+        // Complex squaring:
+        //
+        // v0  = c0 * c1
+        // c0' = (c0 + c1) * (c0 + \beta*c1) - v0 - \beta * v0
+        // c1' = 2 * v0
+        //
+        // In BLS12-381's F_{p^2}, our \beta is -1 so we
+        // can modify this formula:
+        //
+        // c0' = (c0 + c1) * (c0 - c1)
+        // c1' = 2 * c0 * c1
+
+        let a = (&self.c0).add(&self.c1);
+        let b = (&self.c0).sub(&self.c1);
+        let c = (&self.c0).add(&self.c0);
+
+        Fp2 {
+            c0: (&a).mul(&b),
+            c1: (&c).mul(&self.c1),
+        }
+    }
+
     pub fn square(&self) -> Fp2 {
         cfg_if::cfg_if! {
             if #[cfg(target_os = "zkvm")] {
@@ -276,26 +299,7 @@ impl Fp2 {
                 out.mul_r_inv_internal();
                 out
             } else {
-                // Complex squaring:
-                //
-                // v0  = c0 * c1
-                // c0' = (c0 + c1) * (c0 + \beta*c1) - v0 - \beta * v0
-                // c1' = 2 * v0
-                //
-                // In BLS12-381's F_{p^2}, our \beta is -1 so we
-                // can modify this formula:
-                //
-                // c0' = (c0 + c1) * (c0 - c1)
-                // c1' = 2 * c0 * c1
-
-                let a = (&self.c0).add(&self.c1);
-                let b = (&self.c0).sub(&self.c1);
-                let c = (&self.c0).add(&self.c0);
-
-                Fp2 {
-                    c0: (&a).mul(&b),
-                    c1: (&c).mul(&self.c1),
-                }
+                self._square()
             }
         }
     }
@@ -312,6 +316,25 @@ impl Fp2 {
         self.mul_r_inv_internal();
     }
 
+    fn _mul(&self, rhs: &Fp2) -> Fp2 {
+        // F_{p^2} x F_{p^2} multiplication implemented with operand scanning (schoolbook)
+        // computes the result as:
+        //
+        //   a·b = (a_0 b_0 + a_1 b_1 β) + (a_0 b_1 + a_1 b_0)i
+        //
+        // In BLS12-381's F_{p^2}, our β is -1, so the resulting F_{p^2} element is:
+        //
+        //   c_0 = a_0 b_0 - a_1 b_1
+        //   c_1 = a_0 b_1 + a_1 b_0
+        //
+        // Each of these is a "sum of products", which we can compute efficiently.
+
+        Fp2 {
+            c0: Fp::sum_of_products([self.c0, -self.c1], [rhs.c0, rhs.c1]),
+            c1: Fp::sum_of_products([self.c0, self.c1], [rhs.c1, rhs.c0]),
+        }
+    }
+
     pub fn mul(&self, rhs: &Fp2) -> Fp2 {
         cfg_if::cfg_if! {
             if #[cfg(target_os = "zkvm")] {
@@ -322,22 +345,7 @@ impl Fp2 {
                 out.mul_r_inv_internal();
                 out
             } else {
-                // F_{p^2} x F_{p^2} multiplication implemented with operand scanning (schoolbook)
-                // computes the result as:
-                //
-                //   a·b = (a_0 b_0 + a_1 b_1 β) + (a_0 b_1 + a_1 b_0)i
-                //
-                // In BLS12-381's F_{p^2}, our β is -1, so the resulting F_{p^2} element is:
-                //
-                //   c_0 = a_0 b_0 - a_1 b_1
-                //   c_1 = a_0 b_1 + a_1 b_0
-                //
-                // Each of these is a "sum of products", which we can compute efficiently.
-
-                Fp2 {
-                    c0: Fp::sum_of_products([self.c0, -self.c1], [rhs.c0, rhs.c1]),
-                    c1: Fp::sum_of_products([self.c0, self.c1], [rhs.c1, rhs.c0]),
-                }
+                self._mul(rhs)
             }
         }
     }
@@ -364,6 +372,13 @@ impl Fp2 {
         }
     }
 
+    fn _add(&self, rhs: &Fp2) -> Fp2 {
+        Fp2 {
+            c0: (&self.c0)._add(&rhs.c0),
+            c1: (&self.c1)._add(&rhs.c1),
+        }
+    }
+
     pub fn add(&self, rhs: &Fp2) -> Fp2 {
         cfg_if::cfg_if! {
             if #[cfg(target_os = "zkvm")] {
@@ -373,10 +388,7 @@ impl Fp2 {
                 }
                 out
             } else {
-                Fp2 {
-                    c0: (&self.c0).add(&rhs.c0),
-                    c1: (&self.c1).add(&rhs.c1),
-                }
+                self._add(rhs)
             }
         }
     }
@@ -409,6 +421,13 @@ impl Fp2 {
         }
     }
 
+    fn _neg(&self) -> Fp2 {
+        Fp2 {
+            c0: (&self.c0)._neg(),
+            c1: (&self.c1)._neg(),
+        }
+    }
+
     pub fn neg(&self) -> Fp2 {
         cfg_if::cfg_if! {
             if #[cfg(target_os = "zkvm")] {
@@ -418,10 +437,7 @@ impl Fp2 {
                 }
                 out
             } else {
-                Fp2 {
-                    c0: (&self.c0).neg(),
-                    c1: (&self.c1).neg(),
-                }
+                self._neg()
             }
         }
     }
@@ -432,7 +448,7 @@ impl Fp2 {
 
         CtOption::new(Fp2::zero(), self.is_zero()).or_else(|| {
             // a1 = self^((p - 3) / 4)
-            let a1 = self.pow_vartime(&[
+            let a1 = self.pow_vartime_constrained(&[
                 0xee7f_bfff_ffff_eaaa,
                 0x07aa_ffff_ac54_ffff,
                 0xd9cc_34a8_3dac_3d89,
@@ -442,10 +458,10 @@ impl Fp2 {
             ]);
 
             // alpha = a1^2 * self = self^((p - 3) / 2 + 1) = self^((p - 1) / 2)
-            let alpha = a1.square() * self;
+            let alpha = a1._square()._mul(self);
 
             // x0 = self^((p + 1) / 4)
-            let x0 = a1 * self;
+            let x0 = a1._mul(self);
 
             // In the event that alpha = -1, the element is order p - 1 and so
             // we're just trying to get the square of an element of the subfield
@@ -453,28 +469,30 @@ impl Fp2 {
             // x0 = a + bu has b = 0, the solution is therefore au.
             CtOption::new(
                 Fp2 {
-                    c0: -x0.c1,
+                    c0: x0.c1._neg(),
                     c1: x0.c0,
                 },
-                alpha.ct_eq(&(&Fp2::one()).neg()),
+                alpha.ct_eq(&(&Fp2::one())._neg()),
             )
             // Otherwise, the correct solution is (1 + alpha)^((q - 1) // 2) * x0
             .or_else(|| {
                 CtOption::new(
-                    (alpha + Fp2::one()).pow_vartime(&[
-                        0xdcff_7fff_ffff_d555,
-                        0x0f55_ffff_58a9_ffff,
-                        0xb398_6950_7b58_7b12,
-                        0xb23b_a5c2_79c2_895f,
-                        0x258d_d3db_21a5_d66b,
-                        0x0d00_88f5_1cbf_f34d,
-                    ]) * x0,
+                    (alpha._add(&Fp2::one()))
+                        .pow_vartime_constrained(&[
+                            0xdcff_7fff_ffff_d555,
+                            0x0f55_ffff_58a9_ffff,
+                            0xb398_6950_7b58_7b12,
+                            0xb23b_a5c2_79c2_895f,
+                            0x258d_d3db_21a5_d66b,
+                            0x0d00_88f5_1cbf_f34d,
+                        ])
+                        ._mul(&x0),
                     Choice::from(1),
                 )
             })
             // Only return the result if it's really the square root (and so
             // self is actually quadratic nonresidue)
-            .and_then(|sqrt| CtOption::new(sqrt, sqrt.square().ct_eq(self)))
+            .and_then(|sqrt| CtOption::new(sqrt, sqrt._square().ct_eq(self)))
         })
     }
 
@@ -484,15 +502,23 @@ impl Fp2 {
         // {
         //     // Compute the inverse using the zkvm syscall
         //     unconstrained! {
-        //         let mut buf = [0u8; 96];
-        //         buf.copy_from_slice(&self._sqrt().unwrap().to_bytes());
+        //         let mut buf = [0u8; 97];
+        //         self._sqrt().map(|sqrt| {
+        //             buf[..96].copy_from_slice(&sqrt.to_bytes());
+        //             buf[96] = 1;
+        //         });
         //         hint_slice(&buf);
         //     }
 
         //     let byte_vec = read_vec();
-        //     let bytes: [u8; 96] = byte_vec.try_into().unwrap();
-        //     let root = Fp2::from_bytes(&bytes).unwrap();
-        //     CtOption::new(root, !self.is_zero() & (root * root).ct_eq(self))
+        //     let bytes: [u8; 97] = byte_vec.try_into().unwrap();
+        //     match bytes[96] {
+        //         0 => CtOption::new(Fp2::zero(), Choice::from(0u8)),
+        //         _ => {
+        //             let root = Fp2::from_bytes(&bytes[0..96].try_into().unwrap()).unwrap();
+        //             CtOption::new(root, !self.is_zero() & (root * root).ct_eq(self))
+        //         }
+        //     }
         // }
         // #[cfg(not(target_os = "zkvm"))]
         {
@@ -518,11 +544,11 @@ impl Fp2 {
         // of (a + bu). Importantly, this can be computing using
         // only a single inversion in Fp.
 
-        (self.c0.square() + self.c1.square())
+        (self.c0._square()._add(&self.c1._square()))
             ._invert()
             .map(|t| Fp2 {
-                c0: self.c0 * t,
-                c1: self.c1 * -t,
+                c0: self.c0._mul(&t),
+                c1: self.c1._mul(&t._neg()),
             })
     }
 
@@ -531,20 +557,42 @@ impl Fp2 {
         // {
         //     // Compute the inverse using the zkvm syscall
         //     unconstrained! {
-        //         let mut buf = [0u8; 96];
-        //         buf.copy_from_slice(&self._invert().unwrap().to_bytes());
+        //         let mut buf = [0u8; 97];
+        //         self._invert().map(|inv| {
+        //             buf[..96].copy_from_slice(&inv.to_bytes());
+        //             buf[96] = 1;
+        //         });
         //         hint_slice(&buf);
         //     }
 
         //     let byte_vec = read_vec();
-        //     let bytes: [u8; 96] = byte_vec.try_into().unwrap();
-        //     let inv = Fp2::from_bytes(&bytes).unwrap();
-        //     CtOption::new(inv, !self.is_zero() & (self * inv).ct_eq(&Fp2::one()))
+        //     let bytes: [u8; 97] = byte_vec.try_into().unwrap();
+        //     match bytes[96] {
+        //         0 => CtOption::new(Fp2::zero(), Choice::from(0u8)),
+        //         _ => {
+        //             let inv = Fp2::from_bytes(&bytes[0..96].try_into().unwrap()).unwrap();
+        //             CtOption::new(inv, !self.is_zero() & (self * inv).ct_eq(&Fp2::one()))
+        //         }
+        //     }
         // }
         // #[cfg(not(target_os = "zkvm"))]
         {
             self._invert()
         }
+    }
+
+    fn pow_vartime_constrained(&self, by: &[u64; 6]) -> Self {
+        let mut res = Self::one();
+        for e in by.iter().rev() {
+            for i in (0..64).rev() {
+                res = res._square();
+
+                if ((*e >> i) & 1) == 1 {
+                    res = res._mul(self);
+                }
+            }
+        }
+        res
     }
 
     /// Although this is labeled "vartime", it is only
