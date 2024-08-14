@@ -313,63 +313,40 @@ impl Fp6 {
 
         cfg_if::cfg_if! {
             if #[cfg(target_os = "zkvm")] {
-                // let t0 = &self.c0 * &rhs.c0;
                 let mut t0 = self.c0;
                 t0.mul_inp(&b.c0);
-                // let t1 = &self.c1 * &rhs.c1;
                 let mut t1 = self.c1;
                 t1.mul_inp(&b.c1);
-                // let t2 = &self.c2 * &rhs.c2;
                 let mut t2 = self.c2;
                 t2.mul_inp(&b.c2);
-                // let c0 = &self.c1 + &self.c2;
                 let mut c0 = self.c1;
                 c0.add_inp(&self.c2);
-                // let tmp = &rhs.c1 + &rhs.c2;
                 let mut tmp = b.c1;
                 tmp.add_inp(&b.c2);
-                // let c0 = c0 * tmp;
                 c0.mul_inp(&tmp);
-                // let tmp = t2 + t1;
                 tmp = t2;
                 tmp.add_inp(&t1);
-                // let c0 = c0 - tmp;
                 c0.sub_inp(&tmp);
-                // let c0 = c0.mul_by_nonresidue();
                 c0 = c0.mul_by_nonresidue();
-                // let c0 = c0 + t0;
                 c0.add_inp(&t0);
-                // let c1 = &self.c0 + &self.c1;
                 let mut c1 = self.c0;
                 c1.add_inp(&self.c1);
-                // let tmp = &rhs.c0 + &rhs.c1;
                 tmp = b.c0;
                 tmp.add_inp(&b.c1);
-                // let c1 = c1 * tmp;
                 c1.mul_inp(&tmp);
-                // let tmp = t0 + t1;
                 tmp = t0;
                 tmp.add_inp(&t1);
-                // let c1 = c1 - tmp;
                 c1.sub_inp(&tmp);
-                // let tmp = t2.mul_by_nonresidue();
                 tmp = t2.mul_by_nonresidue();
-                // let c1 = c1 + tmp;
                 c1.add_inp(&tmp);
-                // let tmp = &self.c0 + &self.c2;
                 tmp = self.c0;
                 tmp.add_inp(&self.c2);
-                // let c2 = &rhs.c0 + &rhs.c2;
                 let mut c2 = b.c0;
                 c2.add_inp(&b.c2);
-                // let c2 = c2 * tmp;
                 c2.mul_inp(&tmp);
-                // let tmp = t0 + t2;
                 tmp = t0;
                 tmp.add_inp(&t2);
-                // let c2 = c2 - tmp;
                 c2.sub_inp(&tmp);
-                // let c2 = c2 + t1;
                 c2.add_inp(&t1);
                 Fp6 { c0, c1, c2 }
                 // Fp6::new(c0, c1, c2)

@@ -376,29 +376,29 @@ impl Fp {
 
     #[inline]
     pub fn sqrt(&self) -> CtOption<Self> {
-        #[cfg(target_os = "zkvm")]
-        {
-            // Compute the square root using the zkvm syscall
-            unconstrained! {
-                let mut buf = [0u8; 49]; // Allocate 49 bytes to include the flag
-                self._sqrt().map(|root| {
-                    buf[0..48].copy_from_slice(&root.to_bytes());
-                    buf[48] = 1; // Set the flag to 1 indicating the result is valid
-                });
-                hint_slice(&buf);
-            }
+        // #[cfg(target_os = "zkvm")]
+        // {
+        //     // Compute the square root using the zkvm syscall
+        //     unconstrained! {
+        //         let mut buf = [0u8; 49]; // Allocate 49 bytes to include the flag
+        //         self._sqrt().map(|root| {
+        //             buf[0..48].copy_from_slice(&root.to_bytes());
+        //             buf[48] = 1; // Set the flag to 1 indicating the result is valid
+        //         });
+        //         hint_slice(&buf);
+        //     }
 
-            let byte_vec = read_vec();
-            let bytes: [u8; 49] = byte_vec.try_into().unwrap();
-            match bytes[48] {
-                0 => CtOption::new(Fp::zero(), Choice::from(0u8)), // Return None if the flag is 0
-                _ => {
-                    let root = Fp::from_bytes(&bytes[0..48].try_into().unwrap()).unwrap();
-                    CtOption::new(root, !self.is_zero() & (root * root).ct_eq(self))
-                }
-            }
-        }
-        #[cfg(not(target_os = "zkvm"))]
+        //     let byte_vec = read_vec();
+        //     let bytes: [u8; 49] = byte_vec.try_into().unwrap();
+        //     match bytes[48] {
+        //         0 => CtOption::new(Fp::zero(), Choice::from(0u8)), // Return None if the flag is 0
+        //         _ => {
+        //             let root = Fp::from_bytes(&bytes[0..48].try_into().unwrap()).unwrap();
+        //             CtOption::new(root, !self.is_zero() & (root * root).ct_eq(self))
+        //         }
+        //     }
+        // }
+        // #[cfg(not(target_os = "zkvm"))]
         {
             self._sqrt()
         }
