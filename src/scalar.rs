@@ -27,7 +27,7 @@ use crate::util::{adc, mac, sbb};
 // integers in little-endian order. `Scalar` values are always in
 // Montgomery form; i.e., Scalar(a) = aR mod q, with R = 2^256.
 #[derive(Clone, Copy, Eq)]
-pub struct Scalar(pub(crate) [u64; 4]);
+pub struct Scalar(pub [u64; 4]);
 
 impl fmt::Debug for Scalar {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
@@ -563,7 +563,7 @@ impl Scalar {
     }
 
     #[inline(always)]
-    pub(crate) const fn montgomery_reduce(
+    pub const fn montgomery_reduce(
         r0: u64,
         r1: u64,
         r2: u64,

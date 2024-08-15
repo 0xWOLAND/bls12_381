@@ -194,6 +194,14 @@ impl Fp2 {
         self.mul_inp(&Fp2::non_residue());
     }
 
+    #[inline]
+    pub(crate) fn _mul_by_nonresidue(&self) -> Fp2 {
+        Fp2 {
+            c0: self.c0._sub(&self.c1),
+            c1: self.c0._add(&self.c1),
+        }
+    }
+
     #[inline(always)]
     pub fn mul_by_nonresidue(&self) -> Fp2 {
         // Multiply a + bu by u + 1, getting
@@ -266,7 +274,7 @@ impl Fp2 {
         self.mul_r_inv_internal();
     }
 
-    fn _square(&self) -> Fp2 {
+    pub(crate) fn _square(&self) -> Fp2 {
         // Complex squaring:
         //
         // v0  = c0 * c1
@@ -279,13 +287,13 @@ impl Fp2 {
         // c0' = (c0 + c1) * (c0 - c1)
         // c1' = 2 * c0 * c1
 
-        let a = (&self.c0).add(&self.c1);
-        let b = (&self.c0).sub(&self.c1);
-        let c = (&self.c0).add(&self.c0);
+        let a = (&self.c0)._add(&self.c1);
+        let b = (&self.c0)._sub(&self.c1);
+        let c = (&self.c0)._add(&self.c0);
 
         Fp2 {
-            c0: (&a).mul(&b),
-            c1: (&c).mul(&self.c1),
+            c0: (&a)._mul(&b),
+            c1: (&c)._mul(&self.c1),
         }
     }
 
@@ -316,7 +324,7 @@ impl Fp2 {
         self.mul_r_inv_internal();
     }
 
-    fn _mul(&self, rhs: &Fp2) -> Fp2 {
+    pub(crate) fn _mul(&self, rhs: &Fp2) -> Fp2 {
         // F_{p^2} x F_{p^2} multiplication implemented with operand scanning (schoolbook)
         // computes the result as:
         //
@@ -330,7 +338,7 @@ impl Fp2 {
         // Each of these is a "sum of products", which we can compute efficiently.
 
         Fp2 {
-            c0: Fp::sum_of_products([self.c0, -self.c1], [rhs.c0, rhs.c1]),
+            c0: Fp::sum_of_products([self.c0, self.c1._neg()], [rhs.c0, rhs.c1]),
             c1: Fp::sum_of_products([self.c0, self.c1], [rhs.c1, rhs.c0]),
         }
     }
@@ -372,7 +380,7 @@ impl Fp2 {
         }
     }
 
-    fn _add(&self, rhs: &Fp2) -> Fp2 {
+    pub(crate) fn _add(&self, rhs: &Fp2) -> Fp2 {
         Fp2 {
             c0: (&self.c0)._add(&rhs.c0),
             c1: (&self.c1)._add(&rhs.c1),
@@ -404,6 +412,13 @@ impl Fp2 {
         }
     }
 
+    pub(crate) fn _sub(&self, rhs: &Fp2) -> Fp2 {
+        Fp2 {
+            c0: (&self.c0)._sub(&rhs.c0),
+            c1: (&self.c1)._sub(&rhs.c1),
+        }
+    }
+
     pub fn sub(&self, rhs: &Fp2) -> Fp2 {
         cfg_if::cfg_if! {
             if #[cfg(target_os = "zkvm")] {
@@ -421,7 +436,7 @@ impl Fp2 {
         }
     }
 
-    fn _neg(&self) -> Fp2 {
+    pub(crate) fn _neg(&self) -> Fp2 {
         Fp2 {
             c0: (&self.c0)._neg(),
             c1: (&self.c1)._neg(),
@@ -553,29 +568,29 @@ impl Fp2 {
     }
 
     pub fn invert(&self) -> CtOption<Self> {
-        // #[cfg(target_os = "zkvm")]
-        // {
-        //     // Compute the inverse using the zkvm syscall
-        //     unconstrained! {
-        //         let mut buf = [0u8; 97];
-        //         self._invert().map(|inv| {
-        //             buf[..96].copy_from_slice(&inv.to_bytes());
-        //             buf[96] = 1;
-        //         });
-        //         hint_slice(&buf);
-        //     }
+        #[cfg(target_os = "zkvm")]
+        {
+            // Compute the inverse using the zkvm syscall
+            unconstrained! {
+                let mut buf = [0u8; 97];
+                self._invert().map(|inv| {
+                    buf[..96].copy_from_slice(&inv.to_bytes());
+                    buf[96] = 1;
+                });
+                hint_slice(&buf);
+            }
 
-        //     let byte_vec = read_vec();
-        //     let bytes: [u8; 97] = byte_vec.try_into().unwrap();
-        //     match bytes[96] {
-        //         0 => CtOption::new(Fp2::zero(), Choice::from(0u8)),
-        //         _ => {
-        //             let inv = Fp2::from_bytes(&bytes[0..96].try_into().unwrap()).unwrap();
-        //             CtOption::new(inv, !self.is_zero() & (self * inv).ct_eq(&Fp2::one()))
-        //         }
-        //     }
-        // }
-        // #[cfg(not(target_os = "zkvm"))]
+            let byte_vec = read_vec();
+            let bytes: [u8; 97] = byte_vec.try_into().unwrap();
+            match bytes[96] {
+                0 => CtOption::new(Fp2::zero(), Choice::from(0u8)),
+                _ => {
+                    let inv = Fp2::from_bytes(&bytes[0..96].try_into().unwrap()).unwrap();
+                    CtOption::new(inv, !self.is_zero() & (self * inv).ct_eq(&Fp2::one()))
+                }
+            }
+        }
+        #[cfg(not(target_os = "zkvm"))]
         {
             self._invert()
         }
