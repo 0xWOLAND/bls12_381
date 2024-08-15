@@ -6,12 +6,6 @@ use core::fmt;
 use core::ops::{Add, AddAssign, Mul, MulAssign, Neg, Sub, SubAssign};
 use subtle::{Choice, ConditionallySelectable, ConstantTimeEq, CtOption};
 
-#[cfg(target_os = "zkvm")]
-use sp1_lib::{
-    io::{hint_slice, read_vec},
-    unconstrained,
-};
-
 #[cfg(feature = "pairings")]
 use rand_core::RngCore;
 
@@ -303,7 +297,7 @@ impl Fp12 {
     #[inline]
     pub fn invert(&self) -> CtOption<Self> {
         (self.c0.square() - self.c1.square().mul_by_nonresidue())
-            ._invert()
+            .invert()
             .map(|t| Fp12 {
                 c0: self.c0 * t,
                 c1: self.c1 * -t,

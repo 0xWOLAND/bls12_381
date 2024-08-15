@@ -8,12 +8,6 @@ use subtle::{Choice, ConditionallySelectable, ConstantTimeEq, CtOption};
 #[cfg(feature = "pairings")]
 use rand_core::RngCore;
 
-#[cfg(target_os = "zkvm")]
-use sp1_lib::{
-    io::{hint_slice, read_vec},
-    unconstrained,
-};
-
 /// This represents an element $c_0 + c_1 v + c_2 v^2$ of $\mathbb{F}_{p^6} = \mathbb{F}_{p^2} / v^3 - u - 1$.
 pub struct Fp6 {
     pub c0: Fp2,
@@ -462,28 +456,24 @@ impl Fp6 {
     }
 
     #[inline]
-    pub(crate) fn _invert(&self) -> CtOption<Self> {
-        let c0 = (self.c1._mul(&self.c2))._mul_by_nonresidue();
-        let c0 = self.c0._square()._sub(&c0);
-
-        let c1 = self.c2._square()._mul_by_nonresidue();
-        let c1 = c1._sub(&self.c0._mul(&self.c1));
-
-        let c2 = self.c1._square();
-        let c2 = c2._sub(&self.c0._mul(&self.c2));
-
-        let tmp = ((self.c1._mul(&c2))._add(&self.c2._mul(&c1)))._mul_by_nonresidue();
-        let tmp = tmp._add(&self.c0._mul(&c0));
-
-        tmp._invert().map(|t| Fp6 {
-            c0: t._mul(&c0),
-            c1: t._mul(&c1),
-            c2: t._mul(&c2),
-        })
-    }
-
     pub fn invert(&self) -> CtOption<Self> {
-        self._invert()
+        let c0 = (self.c1 * self.c2).mul_by_nonresidue();
+        let c0 = self.c0.square() - c0;
+
+        let c1 = self.c2.square().mul_by_nonresidue();
+        let c1 = c1 - (self.c0 * self.c1);
+
+        let c2 = self.c1.square();
+        let c2 = c2 - (self.c0 * self.c2);
+
+        let tmp = ((self.c1 * c2) + (self.c2 * c1)).mul_by_nonresidue();
+        let tmp = tmp + (self.c0 * c0);
+
+        tmp.invert().map(|t| Fp6 {
+            c0: t * c0,
+            c1: t * c1,
+            c2: t * c2,
+        })
     }
 
     #[inline]

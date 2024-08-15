@@ -22,7 +22,6 @@ use crate::Scalar;
 // Accelerated precompiles for zkvm. Defined directly to prevent circular dependency issues.
 cfg_if! {
     if  #[cfg(target_os = "zkvm")] {
-        use sp1_lib::syscall_bls12381_decompress;
         use sp1_lib::syscall_bls12381_double;
         use sp1_lib::syscall_bls12381_add;
     }

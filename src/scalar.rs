@@ -447,7 +447,7 @@ impl Scalar {
         }
         // found using https://github.com/kwantam/addchain
         let mut t0 = self._square();
-        let mut t1 = t0.mul(self);
+        let mut t1 = t0._mul(self);
         let mut t16 = t0._square();
         let mut t6 = t16._square();
         let mut t5 = t6._mul(&t0);
@@ -536,27 +536,27 @@ impl Scalar {
     }
 
     pub fn invert(&self) -> CtOption<Self> {
-        // #[cfg(target_os = "zkvm")]
-        // {
-        //     unconstrained! {
-        //         let mut buf = [0u8; 33];
-        //         self._invert().map(|sqrt| {
-        //             buf[0..32].copy_from_slice(&sqrt.to_bytes());
-        //             buf[32] = 1;
-        //         });
-        //         hint_slice(&buf);
-        //     }
-        //     let byte_vec = read_vec();
-        //     let bytes: [u8; 33] = byte_vec.try_into().unwrap();
-        //     match bytes[32] {
-        //         0 => CtOption::new(Scalar::zero(), Choice::from(0u8)),
-        //         _ => {
-        //             let sqrt = Scalar::from_bytes(&bytes[0..32].try_into().unwrap()).unwrap();
-        //             CtOption::new(sqrt, (sqrt * sqrt).ct_eq(self))
-        //         }
-        //     }
-        // }
-        // #[cfg(not(target_os = "zkvm"))]
+        #[cfg(target_os = "zkvm")]
+        {
+            unconstrained! {
+                let mut buf = [0u8; 33];
+                self._invert().map(|sqrt| {
+                    buf[0..32].copy_from_slice(&sqrt.to_bytes());
+                    buf[32] = 1;
+                });
+                hint_slice(&buf);
+            }
+            let byte_vec = read_vec();
+            let bytes: [u8; 33] = byte_vec.try_into().unwrap();
+            match bytes[32] {
+                0 => CtOption::new(Scalar::zero(), Choice::from(0u8)),
+                _ => {
+                    let sqrt = Scalar::from_bytes(&bytes[0..32].try_into().unwrap()).unwrap();
+                    CtOption::new(sqrt, (sqrt * sqrt).ct_eq(self))
+                }
+            }
+        }
+        #[cfg(not(target_os = "zkvm"))]
         {
             self._invert()
         }
