@@ -1,6 +1,10 @@
 //! This module provides an implementation of the $\mathbb{G}_1$ group of BLS12-381.
 
+#[cfg(not(target_os = "wasi"))]
 use alloc::{vec, vec::Vec};
+#[cfg(target_os = "wasi")]
+use core::alloc::{vec, vec::Vec};
+
 use cfg_if::cfg_if;
 use core::borrow::Borrow;
 use core::fmt;
