@@ -540,8 +540,8 @@ impl Scalar {
         {
             unconstrained! {
                 let mut buf = [0u8; 33];
-                self._invert().map(|sqrt| {
-                    buf[0..32].copy_from_slice(&sqrt.to_bytes());
+                self._invert().map(|inv| {
+                    buf[0..32].copy_from_slice(&inv.to_bytes());
                     buf[32] = 1;
                 });
                 hint_slice(&buf);
@@ -733,22 +733,12 @@ impl Scalar {
         Scalar([d0 & mask, d1 & mask, d2 & mask, d3 & mask])
     }
 
-    /// Divide `self` by n.
     #[inline]
     pub fn divn(&self, mut n: u32) -> Scalar {
         if n >= 256 {
             return Scalar::from(0);
         }
 
-        // cfg_if! {
-        //     if #[cfg(target_os = "zkvm")]
-        //     {
-        //         let mut lhs = Scalar::from(n as u64).invert().unwrap();
-        //         lhs.mul_inp(&self);
-        //         lhs
-        //     }
-        //     else
-        //     {
         let mut out = self.clone();
 
         while n >= 64 {
@@ -771,8 +761,6 @@ impl Scalar {
 
         out
     }
-    //     }
-    // }
 }
 
 impl From<Scalar> for [u8; 32] {
