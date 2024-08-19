@@ -8,6 +8,12 @@ use subtle::{Choice, ConditionallySelectable, ConstantTimeEq, CtOption};
 #[cfg(feature = "pairings")]
 use rand_core::RngCore;
 
+#[cfg(target_os = "zkvm")]
+use sp1_lib::{
+    io::{hint_slice, read_vec},
+    unconstrained,
+};
+
 /// This represents an element $c_0 + c_1 v + c_2 v^2$ of $\mathbb{F}_{p^6} = \mathbb{F}_{p^2} / v^3 - u - 1$.
 pub struct Fp6 {
     pub c0: Fp2,
@@ -151,14 +157,6 @@ impl Fp6 {
         }
     }
 
-    pub(crate) fn _mul_by_nonresidue(&self) -> Self {
-        Fp6 {
-            c0: self.c2._mul_by_nonresidue(),
-            c1: self.c0,
-            c2: self.c1,
-        }
-    }
-
     /// Multiply by quadratic nonresidue v.
     pub fn mul_by_nonresidue(&self) -> Self {
         // Given a + bv + cv^2, this produces
@@ -272,108 +270,6 @@ impl Fp6 {
         self.c0.is_zero() & self.c1.is_zero() & self.c2.is_zero()
     }
 
-    /// Returns `c = self * b`.
-    ///
-    /// Implements the full-tower interleaving strategy from
-    /// [ePrint 2022-376](https://eprint.iacr.org/2022/367).
-    #[inline]
-    pub(crate) fn _mul_interleaved(&self, b: &Self) -> Self {
-        // The intuition for this algorithm is that we can look at F_p^6 as a direct
-        // extension of F_p^2, and express the overall operations down to the base field
-        // F_p instead of only over F_p^2. This enables us to interleave multiplications
-        // and reductions, ensuring that we don't require double-width intermediate
-        // representations (with around twice as many limbs as F_p elements).
-
-        // We want to express the multiplication c = a x b, where a = (a_0, a_1, a_2) is
-        // an element of F_p^6, and a_i = (a_i,0, a_i,1) is an element of F_p^2. The fully
-        // expanded multiplication is given by (2022-376 §5):
-        //
-        //   c_0,0 = a_0,0 b_0,0 - a_0,1 b_0,1 + a_1,0 b_2,0 - a_1,1 b_2,1 + a_2,0 b_1,0 - a_2,1 b_1,1
-        //                                     - a_1,0 b_2,1 - a_1,1 b_2,0 - a_2,0 b_1,1 - a_2,1 b_1,0.
-        //         = a_0,0 b_0,0 - a_0,1 b_0,1 + a_1,0 (b_2,0 - b_2,1) - a_1,1 (b_2,0 + b_2,1)
-        //                                     + a_2,0 (b_1,0 - b_1,1) - a_2,1 (b_1,0 + b_1,1).
-        //
-        //   c_0,1 = a_0,0 b_0,1 + a_0,1 b_0,0 + a_1,0 b_2,1 + a_1,1 b_2,0 + a_2,0 b_1,1 + a_2,1 b_1,0
-        //                                     + a_1,0 b_2,0 - a_1,1 b_2,1 + a_2,0 b_1,0 - a_2,1 b_1,1.
-        //         = a_0,0 b_0,1 + a_0,1 b_0,0 + a_1,0(b_2,0 + b_2,1) + a_1,1(b_2,0 - b_2,1)
-        //                                     + a_2,0(b_1,0 + b_1,1) + a_2,1(b_1,0 - b_1,1).
-        //
-        //   c_1,0 = a_0,0 b_1,0 - a_0,1 b_1,1 + a_1,0 b_0,0 - a_1,1 b_0,1 + a_2,0 b_2,0 - a_2,1 b_2,1
-        //                                                                 - a_2,0 b_2,1 - a_2,1 b_2,0.
-        //         = a_0,0 b_1,0 - a_0,1 b_1,1 + a_1,0 b_0,0 - a_1,1 b_0,1 + a_2,0(b_2,0 - b_2,1)
-        //                                                                 - a_2,1(b_2,0 + b_2,1).
-        //
-        //   c_1,1 = a_0,0 b_1,1 + a_0,1 b_1,0 + a_1,0 b_0,1 + a_1,1 b_0,0 + a_2,0 b_2,1 + a_2,1 b_2,0
-        //                                                                 + a_2,0 b_2,0 - a_2,1 b_2,1
-        //         = a_0,0 b_1,1 + a_0,1 b_1,0 + a_1,0 b_0,1 + a_1,1 b_0,0 + a_2,0(b_2,0 + b_2,1)
-        //                                                                 + a_2,1(b_2,0 - b_2,1).
-        //
-        //   c_2,0 = a_0,0 b_2,0 - a_0,1 b_2,1 + a_1,0 b_1,0 - a_1,1 b_1,1 + a_2,0 b_0,0 - a_2,1 b_0,1.
-        //   c_2,1 = a_0,0 b_2,1 + a_0,1 b_2,0 + a_1,0 b_1,1 + a_1,1 b_1,0 + a_2,0 b_0,1 + a_2,1 b_0,0.
-        //
-        // Each of these is a "sum of products", which we can compute efficiently.
-
-        let a = self;
-        let b10_p_b11 = b.c1.c0._add(&b.c1.c1);
-        let b10_m_b11 = b.c1.c0._sub(&b.c1.c1);
-        let b20_p_b21 = b.c2.c0._add(&b.c2.c1);
-        let b20_m_b21 = b.c2.c0._sub(&b.c2.c1);
-
-        Fp6 {
-            c0: Fp2 {
-                c0: Fp::sum_of_products(
-                    [
-                        a.c0.c0,
-                        a.c0.c1._neg(),
-                        a.c1.c0,
-                        a.c1.c1._neg(),
-                        a.c2.c0,
-                        a.c2.c1._neg(),
-                    ],
-                    [b.c0.c0, b.c0.c1, b20_m_b21, b20_p_b21, b10_m_b11, b10_p_b11],
-                ),
-                c1: Fp::sum_of_products(
-                    [a.c0.c0, a.c0.c1, a.c1.c0, a.c1.c1, a.c2.c0, a.c2.c1],
-                    [b.c0.c1, b.c0.c0, b20_p_b21, b20_m_b21, b10_p_b11, b10_m_b11],
-                ),
-            },
-            c1: Fp2 {
-                c0: Fp::sum_of_products(
-                    [
-                        a.c0.c0,
-                        a.c0.c1._neg(),
-                        a.c1.c0,
-                        a.c1.c1._neg(),
-                        a.c2.c0,
-                        a.c2.c1._neg(),
-                    ],
-                    [b.c1.c0, b.c1.c1, b.c0.c0, b.c0.c1, b20_m_b21, b20_p_b21],
-                ),
-                c1: Fp::sum_of_products(
-                    [a.c0.c0, a.c0.c1, a.c1.c0, a.c1.c1, a.c2.c0, a.c2.c1],
-                    [b.c1.c1, b.c1.c0, b.c0.c1, b.c0.c0, b20_p_b21, b20_m_b21],
-                ),
-            },
-            c2: Fp2 {
-                c0: Fp::sum_of_products(
-                    [
-                        a.c0.c0,
-                        a.c0.c1._neg(),
-                        a.c1.c0,
-                        a.c1.c1._neg(),
-                        a.c2.c0,
-                        a.c2.c1._neg(),
-                    ],
-                    [b.c2.c0, b.c2.c1, b.c1.c0, b.c1.c1, b.c0.c0, b.c0.c1],
-                ),
-                c1: Fp::sum_of_products(
-                    [a.c0.c0, a.c0.c1, a.c1.c0, a.c1.c1, a.c2.c0, a.c2.c1],
-                    [b.c2.c1, b.c2.c0, b.c1.c1, b.c1.c0, b.c0.c1, b.c0.c0],
-                ),
-            },
-        }
-    }
-
     #[inline]
     fn mul_interleaved(&self, b: &Self) -> Self {
         cfg_if::cfg_if! {
@@ -415,26 +311,81 @@ impl Fp6 {
                     c2.add_inp(&t1);
                     Fp6 { c0, c1, c2 }
                 } else {
-                    self._mul_interleaved(&b)
+        // The intuition for this algorithm is that we can look at F_p^6 as a direct
+        // extension of F_p^2, and express the overall operations down to the base field
+        // F_p instead of only over F_p^2. This enables us to interleave multiplications
+        // and reductions, ensuring that we don't require double-width intermediate
+        // representations (with around twice as many limbs as F_p elements).
 
-            }
-        }
-    }
+        // We want to express the multiplication c = a x b, where a = (a_0, a_1, a_2) is
+        // an element of F_p^6, and a_i = (a_i,0, a_i,1) is an element of F_p^2. The fully
+        // expanded multiplication is given by (2022-376 §5):
+        //
+        //   c_0,0 = a_0,0 b_0,0 - a_0,1 b_0,1 + a_1,0 b_2,0 - a_1,1 b_2,1 + a_2,0 b_1,0 - a_2,1 b_1,1
+        //                                     - a_1,0 b_2,1 - a_1,1 b_2,0 - a_2,0 b_1,1 - a_2,1 b_1,0.
+        //         = a_0,0 b_0,0 - a_0,1 b_0,1 + a_1,0 (b_2,0 - b_2,1) - a_1,1 (b_2,0 + b_2,1)
+        //                                     + a_2,0 (b_1,0 - b_1,1) - a_2,1 (b_1,0 + b_1,1).
+        //
+        //   c_0,1 = a_0,0 b_0,1 + a_0,1 b_0,0 + a_1,0 b_2,1 + a_1,1 b_2,0 + a_2,0 b_1,1 + a_2,1 b_1,0
+        //                                     + a_1,0 b_2,0 - a_1,1 b_2,1 + a_2,0 b_1,0 - a_2,1 b_1,1.
+        //         = a_0,0 b_0,1 + a_0,1 b_0,0 + a_1,0(b_2,0 + b_2,1) + a_1,1(b_2,0 - b_2,1)
+        //                                     + a_2,0(b_1,0 + b_1,1) + a_2,1(b_1,0 - b_1,1).
+        //
+        //   c_1,0 = a_0,0 b_1,0 - a_0,1 b_1,1 + a_1,0 b_0,0 - a_1,1 b_0,1 + a_2,0 b_2,0 - a_2,1 b_2,1
+        //                                                                 - a_2,0 b_2,1 - a_2,1 b_2,0.
+        //         = a_0,0 b_1,0 - a_0,1 b_1,1 + a_1,0 b_0,0 - a_1,1 b_0,1 + a_2,0(b_2,0 - b_2,1)
+        //                                                                 - a_2,1(b_2,0 + b_2,1).
+        //
+        //   c_1,1 = a_0,0 b_1,1 + a_0,1 b_1,0 + a_1,0 b_0,1 + a_1,1 b_0,0 + a_2,0 b_2,1 + a_2,1 b_2,0
+        //                                                                 + a_2,0 b_2,0 - a_2,1 b_2,1
+        //         = a_0,0 b_1,1 + a_0,1 b_1,0 + a_1,0 b_0,1 + a_1,1 b_0,0 + a_2,0(b_2,0 + b_2,1)
+        //                                                                 + a_2,1(b_2,0 - b_2,1).
+        //
+        //   c_2,0 = a_0,0 b_2,0 - a_0,1 b_2,1 + a_1,0 b_1,0 - a_1,1 b_1,1 + a_2,0 b_0,0 - a_2,1 b_0,1.
+        //   c_2,1 = a_0,0 b_2,1 + a_0,1 b_2,0 + a_1,0 b_1,1 + a_1,1 b_1,0 + a_2,0 b_0,1 + a_2,1 b_0,0.
+        //
+        // Each of these is a "sum of products", which we can compute efficiently.
 
-    #[inline]
-    pub fn _square(&self) -> Self {
-        let s0 = self.c0._square();
-        let ab = self.c0._mul(&self.c1);
-        let s1 = ab._add(&ab);
-        let s2 = (self.c0._sub(&self.c1)._add(&self.c2))._square();
-        let bc = self.c1._mul(&self.c2);
-        let s3 = bc._add(&bc);
-        let s4 = self.c2._square();
+        let a = self;
+        let b10_p_b11 = b.c1.c0 + b.c1.c1;
+        let b10_m_b11 = b.c1.c0 - b.c1.c1;
+        let b20_p_b21 = b.c2.c0 + b.c2.c1;
+        let b20_m_b21 = b.c2.c0 - b.c2.c1;
 
         Fp6 {
-            c0: s3._mul_by_nonresidue()._add(&s0),
-            c1: s4._mul_by_nonresidue()._add(&s1),
-            c2: s1._add(&s2)._add(&s3)._sub(&s0)._sub(&s4),
+            c0: Fp2 {
+                c0: Fp::sum_of_products(
+                    [a.c0.c0, -a.c0.c1, a.c1.c0, -a.c1.c1, a.c2.c0, -a.c2.c1],
+                    [b.c0.c0, b.c0.c1, b20_m_b21, b20_p_b21, b10_m_b11, b10_p_b11],
+                ),
+                c1: Fp::sum_of_products(
+                    [a.c0.c0, a.c0.c1, a.c1.c0, a.c1.c1, a.c2.c0, a.c2.c1],
+                    [b.c0.c1, b.c0.c0, b20_p_b21, b20_m_b21, b10_p_b11, b10_m_b11],
+                ),
+            },
+            c1: Fp2 {
+                c0: Fp::sum_of_products(
+                    [a.c0.c0, -a.c0.c1, a.c1.c0, -a.c1.c1, a.c2.c0, -a.c2.c1],
+                    [b.c1.c0, b.c1.c1, b.c0.c0, b.c0.c1, b20_m_b21, b20_p_b21],
+                ),
+                c1: Fp::sum_of_products(
+                    [a.c0.c0, a.c0.c1, a.c1.c0, a.c1.c1, a.c2.c0, a.c2.c1],
+                    [b.c1.c1, b.c1.c0, b.c0.c1, b.c0.c0, b20_p_b21, b20_m_b21],
+                ),
+            },
+            c2: Fp2 {
+                c0: Fp::sum_of_products(
+                    [a.c0.c0, -a.c0.c1, a.c1.c0, -a.c1.c1, a.c2.c0, -a.c2.c1],
+                    [b.c2.c0, b.c2.c1, b.c1.c0, b.c1.c1, b.c0.c0, b.c0.c1],
+                ),
+                c1: Fp::sum_of_products(
+                    [a.c0.c0, a.c0.c1, a.c1.c0, a.c1.c1, a.c2.c0, a.c2.c1],
+                    [b.c2.c1, b.c2.c0, b.c1.c1, b.c1.c0, b.c0.c1, b.c0.c0],
+                ),
+            },
+        }
+
+            }
         }
     }
 
@@ -474,33 +425,6 @@ impl Fp6 {
             c1: t * c1,
             c2: t * c2,
         })
-    }
-
-    #[inline]
-    pub(crate) fn _add(&self, rhs: &Self) -> Self {
-        Fp6 {
-            c0: self.c0._add(&rhs.c0),
-            c1: self.c1._add(&rhs.c1),
-            c2: self.c2._add(&rhs.c2),
-        }
-    }
-
-    #[inline]
-    pub(crate) fn _sub(&self, rhs: &Self) -> Self {
-        Fp6 {
-            c0: self.c0._sub(&rhs.c0),
-            c1: self.c1._sub(&rhs.c1),
-            c2: self.c2._sub(&rhs.c2),
-        }
-    }
-
-    #[inline]
-    pub(crate) fn _neg(&self) -> Self {
-        Fp6 {
-            c0: self.c0._neg(),
-            c1: self.c1._neg(),
-            c2: self.c2._neg(),
-        }
     }
 
     #[inline]

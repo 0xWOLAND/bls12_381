@@ -1,11 +1,4 @@
 //! This module provides an implementation of the $\mathbb{G}_1$ group of BLS12-381.
-
-#[cfg(not(target_os = "wasi"))]
-use alloc::{vec, vec::Vec};
-#[cfg(target_os = "wasi")]
-use core::alloc::{vec, vec::Vec};
-
-use cfg_if::cfg_if;
 use core::borrow::Borrow;
 use core::fmt;
 use core::iter::Sum;
@@ -22,14 +15,11 @@ use group::WnafGroup;
 
 use crate::fp::Fp;
 use crate::Scalar;
-
+use alloc::vec;
+use alloc::vec::Vec;
 // Accelerated precompiles for zkvm. Defined directly to prevent circular dependency issues.
-cfg_if! {
-    if  #[cfg(target_os = "zkvm")] {
-        use sp1_lib::syscall_bls12381_double;
-        use sp1_lib::syscall_bls12381_add;
-    }
-}
+#[cfg(target_os = "zkvm")]
+use sp1_lib::{syscall_bls12381_add, syscall_bls12381_double};
 
 /// This is an element of $\mathbb{G}_1$ represented in the affine coordinate space.
 /// It is ideal to keep elements in this representation to reduce memory usage and

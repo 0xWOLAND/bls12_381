@@ -390,15 +390,15 @@ impl Scalar {
     /// Squares this element.
     #[inline]
     pub fn square(&self) -> Scalar {
-        cfg_if! {
-            if #[cfg(target_os = "zkvm")] {
-                let mut res = *self;
-                res.mul_inp(self);
-                res
-            } else {
-                self._square()
-            }
-        }
+        // cfg_if! {
+        //     if #[cfg(target_os = "zkvm")] {
+        //         let mut res = *self;
+        //         res.mul_inp(self);
+        //         res
+        //     } else {
+        self._square()
+        //     }
+        // }
     }
 
     /// Exponentiates `self` by `by`, where `by` is a
@@ -551,8 +551,8 @@ impl Scalar {
             match bytes[32] {
                 0 => CtOption::new(Scalar::zero(), Choice::from(0u8)),
                 _ => {
-                    let sqrt = Scalar::from_bytes(&bytes[0..32].try_into().unwrap()).unwrap();
-                    CtOption::new(sqrt, (sqrt * sqrt).ct_eq(self))
+                    let inv = Scalar::from_bytes(&bytes[0..32].try_into().unwrap()).unwrap();
+                    CtOption::new(inv, (self * inv).ct_eq(&Scalar::one()))
                 }
             }
         }
