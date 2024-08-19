@@ -274,6 +274,7 @@ impl Fp6 {
     fn mul_interleaved(&self, b: &Self) -> Self {
         cfg_if::cfg_if! {
                 if #[cfg(target_os = "zkvm")] {
+                    // Implements Algorithm 13 from https://eprint.iacr.org/2010/354.pdf
                     let mut t0 = self.c0;
                     t0.mul_inp(&b.c0);
                     let mut t1 = self.c1;
