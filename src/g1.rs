@@ -8,6 +8,7 @@ use group::{
     Curve, Group, GroupEncoding, UncompressedEncoding,
 };
 use rand_core::RngCore;
+use sp1_lib::bls12381::decompress_pubkey;
 use subtle::{Choice, ConditionallySelectable, ConstantTimeEq, CtOption};
 
 #[cfg(feature = "alloc")]
@@ -329,21 +330,17 @@ impl G1Affine {
     /// Attempts to deserialize a compressed element. See [`notes::serialization`](crate::notes::serialization)
     /// for details about how group elements are serialized.
     pub fn from_compressed(bytes: &[u8; 48]) -> CtOption<Self> {
-        // cfg_if::cfg_if! {
-        //     if #[cfg(target_os = "zkvm")] {
-        //         let mut decompressed_g1 = [0u8; 96];
-        //         decompressed_g1[..48].copy_from_slice(bytes);
-        //         unsafe {
-        //             syscall_bls12381_decompress(&mut decompressed_g1, bytes[0] != 0);
-        //         }
-        //         Self::from_uncompressed_unchecked(&decompressed_g1).and_then(|p| CtOption::new(p, p.is_torsion_free()))
-        //     } else {
-        // We already know the point is on the curve because this is established
-        // by the y-coordinate recovery procedure in from_compressed_unchecked().
+        cfg_if::cfg_if! {
+            if #[cfg(target_os = "zkvm")] {
+                // by the y-coordinate recovery procedure in decompress_pubkey().
+                let decompressed = decompress_pubkey(bytes).unwrap();
 
-        Self::from_compressed_unchecked(bytes).and_then(|p| CtOption::new(p, p.is_torsion_free()))
-        // }
-        // }
+                // Extra checks do not have to be done because because the precompile already does it for us.
+                G1Affine::from_uncompressed_unchecked(&decompressed)
+            } else {
+                Self::from_compressed_unchecked(bytes).and_then(|p| CtOption::new(p, p.is_torsion_free()))
+            }
+        }
     }
 
     /// Attempts to deserialize an uncompressed element, not checking if the
@@ -351,69 +348,68 @@ impl G1Affine {
     /// **This is dangerous to call unless you trust the bytes you are reading; otherwise,
     /// API invariants may be broken.** Please consider using `from_compressed()` instead.
     pub fn from_compressed_unchecked(bytes: &[u8; 48]) -> CtOption<Self> {
-        // cfg_if::cfg_if! {
-        //     if #[cfg(target_os = "zkvm")] {
-        //         let mut decompressed_g1 = [0u8; 96];
-        //         decompressed_g1[..48].copy_from_slice(bytes);
-        //         unsafe {
-        //             syscall_bls12381_decompress(&mut decompressed_g1, bytes[0] != 0);
-        //         }
-        //         Self::from_uncompressed_unchecked(&decompressed_g1)
-        //     } else {
-        // Obtain the three flags from the start of the byte sequence
-        let compression_flag_set = Choice::from((bytes[0] >> 7) & 1);
-        let infinity_flag_set = Choice::from((bytes[0] >> 6) & 1);
-        let sort_flag_set = Choice::from((bytes[0] >> 5) & 1);
+        cfg_if::cfg_if! {
+            if #[cfg(target_os = "zkvm")] {
+                // by the y-coordinate recovery procedure in decompress_pubkey().
+                let decompressed = decompress_pubkey(bytes).unwrap();
 
-        // Attempt to obtain the x-coordinate
-        let x = {
-            let mut tmp = [0; 48];
-            tmp.copy_from_slice(&bytes[0..48]);
+                // Extra checks do not have to be done because because the precompile already does it for us.
+                G1Affine::from_uncompressed_unchecked(&decompressed)
+            } else {
+                // Obtain the three flags from the start of the byte sequence
+                let compression_flag_set = Choice::from((bytes[0] >> 7) & 1);
+                let infinity_flag_set = Choice::from((bytes[0] >> 6) & 1);
+                let sort_flag_set = Choice::from((bytes[0] >> 5) & 1);
 
-            // Mask away the flag bits
-            tmp[0] &= 0b0001_1111;
+                // Attempt to obtain the x-coordinate
+                let x = {
+                    let mut tmp = [0; 48];
+                    tmp.copy_from_slice(&bytes[0..48]);
 
-            Fp::from_bytes(&tmp)
-        };
+                    // Mask away the flag bits
+                    tmp[0] &= 0b0001_1111;
 
-        x.and_then(|x| {
-            // If the infinity flag is set, return the value assuming
-            // the x-coordinate is zero and the sort bit is not set.
-            //
-            // Otherwise, return a recovered point (assuming the correct
-            // y-coordinate can be found) so long as the infinity flag
-            // was not set.
-            CtOption::new(
-                G1Affine::identity(),
-                infinity_flag_set & // Infinity flag should be set
-                            compression_flag_set & // Compression flag should be set
-                            (!sort_flag_set) & // Sort flag should not be set
-                            x.is_zero(), // The x-coordinate should be zero
-            )
-            .or_else(|| {
-                // Recover a y-coordinate given x by y = sqrt(x^3 + 4)
-                ((x.square() * x) + B).sqrt().and_then(|y| {
-                    // Switch to the correct y-coordinate if necessary.
-                    let y = Fp::conditional_select(
-                        &y,
-                        &-y,
-                        y.lexicographically_largest() ^ sort_flag_set,
-                    );
+                    Fp::from_bytes(&tmp)
+                };
 
+                x.and_then(|x| {
+                    // If the infinity flag is set, return the value assuming
+                    // the x-coordinate is zero and the sort bit is not set.
+                    //
+                    // Otherwise, return a recovered point (assuming the correct
+                    // y-coordinate can be found) so long as the infinity flag
+                    // was not set.
                     CtOption::new(
-                        G1Affine {
-                            x,
-                            y,
-                            infinity: infinity_flag_set,
-                        },
-                        (!infinity_flag_set) & // Infinity flag should not be set
-                                        compression_flag_set, // Compression flag should be set
+                        G1Affine::identity(),
+                        infinity_flag_set & // Infinity flag should be set
+                                    compression_flag_set & // Compression flag should be set
+                                    (!sort_flag_set) & // Sort flag should not be set
+                                    x.is_zero(), // The x-coordinate should be zero
                     )
+                    .or_else(|| {
+                        // Recover a y-coordinate given x by y = sqrt(x^3 + 4)
+                        ((x.square() * x) + B).sqrt().and_then(|y| {
+                            // Switch to the correct y-coordinate if necessary.
+                            let y = Fp::conditional_select(
+                                &y,
+                                &-y,
+                                y.lexicographically_largest() ^ sort_flag_set,
+                            );
+
+                            CtOption::new(
+                                G1Affine {
+                                    x,
+                                    y,
+                                    infinity: infinity_flag_set,
+                                },
+                                (!infinity_flag_set) & // Infinity flag should not be set
+                                                compression_flag_set, // Compression flag should be set
+                            )
+                        })
+                    })
                 })
-            })
-        })
-        //     }
-        // }
+            }
+        }
     }
 
     /// Returns true if this element is the identity (the point at infinity).
