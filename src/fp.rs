@@ -324,7 +324,7 @@ impl Fp {
         Fp(v)
     }
 
-    /// Non-ZKVM version of the exponentiation operation. Necessary to prevent syscalls in unconstrained mode.
+    /// CPU version of the exponentiation operation. Necessary to prevent syscalls in unconstrained mode.
     pub(crate) fn cpu_pow_vartime(&self, by: &[u64; 6]) -> Self {
         let mut res = Self::one();
         for e in by.iter().rev() {
@@ -357,7 +357,7 @@ impl Fp {
     }
 
     #[inline]
-    /// Non-ZKVM version of the square-root operation. Necessary to prevent syscalls in unconstrained mode.
+    /// CPU version of the square-root operation. Necessary to prevent syscalls in unconstrained mode.
     pub(crate) fn cpu_sqrt(&self) -> CtOption<Self> {
         // We use Shank's method, as p = 3 (mod 4). This means
         // we only need to exponentiate by (p+1)/4. This only
@@ -407,7 +407,7 @@ impl Fp {
     }
 
     #[inline]
-    /// Non-ZKVM version of the inversion operation. Necessary to prevent syscalls in unconstrained mode.
+    /// CPU version of the inversion operation. Necessary to prevent syscalls in unconstrained mode.
     pub(crate) fn cpu_invert(&self) -> CtOption<Self> {
         // Exponentiate by p - 2
         let inv = self.cpu_pow_vartime(&[
@@ -484,7 +484,7 @@ impl Fp {
     }
 
     #[inline]
-    /// Non-ZKVM version of the addition operation. Necessary to prevent syscalls in unconstrained mode.
+    /// CPU version of the addition operation. Necessary to prevent syscalls in unconstrained mode.
     pub(crate) fn cpu_add(&self, rhs: &Fp) -> Fp {
         let (d0, carry) = adc(self.0[0], rhs.0[0], 0);
         let (d1, carry) = adc(self.0[1], rhs.0[1], carry);
@@ -513,7 +513,7 @@ impl Fp {
         }
     }
 
-    /// Non-ZKVM version of the negation operation. Necessary to prevent syscalls in unconstrained mode.
+    /// CPU version of the negation operation. Necessary to prevent syscalls in unconstrained mode.
     pub(crate) fn cpu_neg(&self) -> Fp {
         let (d0, borrow) = sbb(MODULUS[0], self.0[0], 0);
         let (d1, borrow) = sbb(MODULUS[1], self.0[1], borrow);
@@ -580,7 +580,7 @@ impl Fp {
     }
 
     #[inline]
-    /// Non-ZKVM version of the subtraction operation. Necessary to prevent syscalls in unconstrained mode.
+    /// CPU version of the subtraction operation. Necessary to prevent syscalls in unconstrained mode.
     pub(crate) fn cpu_sub(&self, rhs: &Fp) -> Fp {
         self.cpu_add(&rhs.cpu_neg())
     }
@@ -752,7 +752,7 @@ impl Fp {
     }
 
     #[inline]
-    /// Non-ZKVM version of the multiplication operation. Necessary to prevent syscalls in unconstrained mode.
+    /// CPU version of the multiplication operation. Necessary to prevent syscalls in unconstrained mode.
     pub(crate) fn cpu_mul(&self, rhs: &Fp) -> Fp {
         let (t0, carry) = mac(0, self.0[0], rhs.0[0], 0);
         let (t1, carry) = mac(0, self.0[0], rhs.0[1], carry);
@@ -852,7 +852,7 @@ impl Fp {
         self.mul_r_inv_internal();
     }
 
-    /// Non-ZKVM version of the squaring operation. Necessary to prevent syscalls in unconstrained mode.
+    /// CPU version of the squaring operation. Necessary to prevent syscalls in unconstrained mode.
     pub(crate) fn cpu_square(&self) -> Self {
         let (t1, carry) = mac(0, self.0[0], self.0[1], 0);
         let (t2, carry) = mac(0, self.0[0], self.0[2], carry);

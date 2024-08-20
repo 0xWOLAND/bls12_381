@@ -357,7 +357,7 @@ impl Scalar {
     }
 
     #[inline]
-    /// Non-ZKVM version of the square operation. Necessary to prevent syscalls in unconstrained mode.
+    /// CPU version of the square operation. Necessary to prevent syscalls in unconstrained mode.
     fn cpu_square(&self) -> Scalar {
         let (r1, carry) = mac(0, self.0[0], self.0[1], 0);
         let (r2, carry) = mac(0, self.0[0], self.0[2], carry);
@@ -439,7 +439,7 @@ impl Scalar {
 
     /// Computes the multiplicative inverse of this element,
     /// failing if the element is zero.
-    /// Non-ZKVM version of the invert operation. Necessary to prevent syscalls in unconstrained mode.
+    /// CPU version of the invert operation. Necessary to prevent syscalls in unconstrained mode.
     fn cpu_invert(&self) -> CtOption<Self> {
         #[inline(always)]
         fn square_assign_multi(n: &mut Scalar, num_times: usize) {
@@ -646,7 +646,7 @@ impl Scalar {
         }
     }
 
-    /// Non-ZKVM version of the multiplication operation. Necessary to prevent syscalls in unconstrained mode.
+    /// CPU version of the multiplication operation. Necessary to prevent syscalls in unconstrained mode.
     fn cpu_mul(&self, rhs: &Self) -> Self {
         // Schoolbook multiplication
 

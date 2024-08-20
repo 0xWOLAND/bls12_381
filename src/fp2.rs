@@ -266,7 +266,7 @@ impl Fp2 {
         self.mul_r_inv_internal();
     }
 
-    /// Non-ZKVM implementation of squaring. Necessary to prevent syscalls in unconstrained mode.
+    /// CPU implementation of squaring. Necessary to prevent syscalls in unconstrained mode.
     pub(crate) fn cpu_square(&self) -> Fp2 {
         // Complex squaring:
         //
@@ -317,7 +317,7 @@ impl Fp2 {
         self.mul_r_inv_internal();
     }
 
-    /// Non-ZKVM version of the multiplication operation. Necessary to prevent syscalls in unconstrained mode.
+    /// CPU version of the multiplication operation. Necessary to prevent syscalls in unconstrained mode.
     pub(crate) fn cpu_mul(&self, rhs: &Fp2) -> Fp2 {
         // F_{p^2} x F_{p^2} multiplication implemented with operand scanning (schoolbook)
         // computes the result as:
@@ -374,7 +374,7 @@ impl Fp2 {
         }
     }
 
-    /// Non-ZKVM version of the addition operation. Necessary to prevent syscalls in unconstrained mode.
+    /// CPU version of the addition operation. Necessary to prevent syscalls in unconstrained mode.
     pub(crate) fn cpu_add(&self, rhs: &Fp2) -> Fp2 {
         Fp2 {
             c0: (&self.c0).cpu_add(&rhs.c0),
@@ -407,7 +407,7 @@ impl Fp2 {
         }
     }
 
-    /// Non-ZKVM version of the subtraction operation. Necessary to prevent syscalls in unconstrained mode.
+    /// CPU version of the subtraction operation. Necessary to prevent syscalls in unconstrained mode.
     pub(crate) fn cpu_sub(&self, rhs: &Fp2) -> Fp2 {
         Fp2 {
             c0: (&self.c0).cpu_sub(&rhs.c0),
@@ -432,7 +432,7 @@ impl Fp2 {
         }
     }
 
-    /// Non-ZKVM version of the negation operation. Necessary to prevent syscalls in unconstrained mode.
+    /// CPU version of the negation operation. Necessary to prevent syscalls in unconstrained mode.
     pub(crate) fn cpu_neg(&self) -> Fp2 {
         Fp2 {
             c0: (&self.c0).cpu_neg(),
@@ -454,7 +454,7 @@ impl Fp2 {
         }
     }
 
-    /// Non-ZKVM version of the square root operation. Necessary to prevent syscalls in unconstrained mode.
+    /// CPU version of the square root operation. Necessary to prevent syscalls in unconstrained mode.
     pub(crate) fn cpu_sqrt(&self) -> CtOption<Self> {
         // Algorithm 9, https://eprint.iacr.org/2012/685.pdf
         // with constant time modifications.
@@ -542,7 +542,7 @@ impl Fp2 {
     /// Computes the multiplicative inverse of this field
     /// element, returning None in the case that this element
     /// is zero.
-    /// Non-ZKVM version of the inversion operation. Necessary to prevent syscalls in unconstrained mode.
+    /// CPU version of the inversion operation. Necessary to prevent syscalls in unconstrained mode.
     pub(crate) fn cpu_invert(&self) -> CtOption<Self> {
         // We wish to find the multiplicative inverse of a nonzero
         // element a + bu in Fp2. We leverage an identity
