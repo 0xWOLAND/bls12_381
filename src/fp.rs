@@ -324,14 +324,15 @@ impl Fp {
         Fp(v)
     }
 
-    pub(crate) fn pow_vartime_unconstrained(&self, by: &[u64; 6]) -> Self {
+    /// CPU version of the exponentiation operation. Necessary to prevent syscalls in unconstrained mode.
+    pub(crate) fn cpu_pow_vartime(&self, by: &[u64; 6]) -> Self {
         let mut res = Self::one();
         for e in by.iter().rev() {
             for i in (0..64).rev() {
-                res = res._mul(&res);
+                res = res.cpu_mul(&res);
 
                 if ((*e >> i) & 1) == 1 {
-                    res = res._mul(self);
+                    res = res.cpu_mul(self);
                 }
             }
         }
@@ -356,13 +357,14 @@ impl Fp {
     }
 
     #[inline]
-    pub(crate) fn _sqrt(&self) -> CtOption<Self> {
+    /// CPU version of the square-root operation. Necessary to prevent syscalls in unconstrained mode.
+    pub(crate) fn cpu_sqrt(&self) -> CtOption<Self> {
         // We use Shank's method, as p = 3 (mod 4). This means
         // we only need to exponentiate by (p+1)/4. This only
         // works for elements that are actually quadratic residue,
         // so we check that we got the correct result at the end.
 
-        let sqrt = self.pow_vartime(&[
+        let sqrt = self.cpu_pow_vartime(&[
             0xee7f_bfff_ffff_eaab,
             0x07aa_ffff_ac54_ffff,
             0xd9cc_34a8_3dac_3d89,
@@ -371,7 +373,7 @@ impl Fp {
             0x0680_447a_8e5f_f9a6,
         ]);
 
-        CtOption::new(sqrt, sqrt._square().ct_eq(self))
+        CtOption::new(sqrt, sqrt.cpu_square().ct_eq(self))
     }
 
     #[inline]
@@ -381,7 +383,7 @@ impl Fp {
             // Compute the square root using the zkvm syscall
             unconstrained! {
                 let mut buf = [0u8; 49]; // Allocate 49 bytes to include the flag
-                self._sqrt().map(|root| {
+                self.cpu_sqrt().map(|root| {
                     buf[0..48].copy_from_slice(&root.to_bytes());
                     buf[48] = 1; // Set the flag to 1 indicating the result is valid
                 });
@@ -400,14 +402,15 @@ impl Fp {
         }
         #[cfg(not(target_os = "zkvm"))]
         {
-            self._sqrt()
+            self.cpu_sqrt()
         }
     }
 
     #[inline]
-    pub(crate) fn _invert(&self) -> CtOption<Self> {
+    /// CPU version of the inversion operation. Necessary to prevent syscalls in unconstrained mode.
+    pub(crate) fn cpu_invert(&self) -> CtOption<Self> {
         // Exponentiate by p - 2
-        let inv = self.pow_vartime_unconstrained(&[
+        let inv = self.cpu_pow_vartime(&[
             0xb9fe_ffff_ffff_aaa9,
             0x1eab_fffe_b153_ffff,
             0x6730_d2a0_f6b0_f624,
@@ -425,7 +428,7 @@ impl Fp {
             // Compute the inverse using the zkvm syscall
             unconstrained! {
                 let mut buf = [0u8; 49];
-                self._invert().map(|inv| {
+                self.cpu_invert().map(|inv| {
                     buf[0..48].copy_from_slice(&inv.to_bytes());
                     buf[48] = 1;
                 });
@@ -444,7 +447,7 @@ impl Fp {
         }
         #[cfg(not(target_os = "zkvm"))]
         {
-            self._invert()
+            self.cpu_invert()
         }
     }
 
@@ -480,7 +483,9 @@ impl Fp {
         }
     }
 
-    pub(crate) fn _add(&self, rhs: &Fp) -> Fp {
+    #[inline]
+    /// CPU version of the addition operation. Necessary to prevent syscalls in unconstrained mode.
+    pub(crate) fn cpu_add(&self, rhs: &Fp) -> Fp {
         let (d0, carry) = adc(self.0[0], rhs.0[0], 0);
         let (d1, carry) = adc(self.0[1], rhs.0[1], carry);
         let (d2, carry) = adc(self.0[2], rhs.0[2], carry);
@@ -503,12 +508,13 @@ impl Fp {
                 }
                 out
             } else {
-                self._add(rhs)
+                self.cpu_add(rhs)
             }
         }
     }
 
-    pub(crate) fn _neg(&self) -> Fp {
+    /// CPU version of the negation operation. Necessary to prevent syscalls in unconstrained mode.
+    pub(crate) fn cpu_neg(&self) -> Fp {
         let (d0, borrow) = sbb(MODULUS[0], self.0[0], 0);
         let (d1, borrow) = sbb(MODULUS[1], self.0[1], borrow);
         let (d2, borrow) = sbb(MODULUS[2], self.0[2], borrow);
@@ -542,7 +548,7 @@ impl Fp {
                 }
                 out
             } else {
-                self._neg()
+                self.cpu_neg()
             }
         }
     }
@@ -571,6 +577,12 @@ impl Fp {
                 (&rhs.neg()).add(self)
             }
         }
+    }
+
+    #[inline]
+    /// CPU version of the subtraction operation. Necessary to prevent syscalls in unconstrained mode.
+    pub(crate) fn cpu_sub(&self, rhs: &Fp) -> Fp {
+        self.cpu_add(&rhs.cpu_neg())
     }
 
     /// Returns `c = a.zip(b).fold(0, |acc, (a_i, b_i)| acc + a_i * b_i)`.
@@ -740,7 +752,8 @@ impl Fp {
     }
 
     #[inline]
-    pub(crate) fn _mul(&self, rhs: &Fp) -> Fp {
+    /// CPU version of the multiplication operation. Necessary to prevent syscalls in unconstrained mode.
+    pub(crate) fn cpu_mul(&self, rhs: &Fp) -> Fp {
         let (t0, carry) = mac(0, self.0[0], rhs.0[0], 0);
         let (t1, carry) = mac(0, self.0[0], rhs.0[1], carry);
         let (t2, carry) = mac(0, self.0[0], rhs.0[2], carry);
@@ -797,7 +810,7 @@ impl Fp {
                 out.mul_r_inv_internal();
                 out
             } else {
-                self._mul(rhs)
+                self.cpu_mul(rhs)
             }
         }
     }
@@ -839,7 +852,8 @@ impl Fp {
         self.mul_r_inv_internal();
     }
 
-    pub(crate) fn _square(&self) -> Self {
+    /// CPU version of the squaring operation. Necessary to prevent syscalls in unconstrained mode.
+    pub(crate) fn cpu_square(&self) -> Self {
         let (t1, carry) = mac(0, self.0[0], self.0[1], 0);
         let (t2, carry) = mac(0, self.0[0], self.0[2], carry);
         let (t3, carry) = mac(0, self.0[0], self.0[3], carry);
@@ -900,7 +914,7 @@ impl Fp {
                 out.mul_r_inv_internal();
                 out
             } else {
-                self._square()
+                self.cpu_square()
             }
         }
     }

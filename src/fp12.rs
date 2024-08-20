@@ -6,14 +6,14 @@ use core::fmt;
 use core::ops::{Add, AddAssign, Mul, MulAssign, Neg, Sub, SubAssign};
 use subtle::{Choice, ConditionallySelectable, ConstantTimeEq, CtOption};
 
+#[cfg(feature = "pairings")]
+use rand_core::RngCore;
+
 #[cfg(target_os = "zkvm")]
 use sp1_lib::{
     io::{hint_slice, read_vec},
     unconstrained,
 };
-
-#[cfg(feature = "pairings")]
-use rand_core::RngCore;
 
 /// This represents an element $c_0 + c_1 w$ of $\mathbb{F}_{p^12} = \mathbb{F}_{p^6} / w^2 - v$.
 pub struct Fp12 {
@@ -300,35 +300,14 @@ impl Fp12 {
         Fp12 { c0, c1 }
     }
 
-    pub(crate) fn _invert(&self) -> CtOption<Self> {
+    #[inline]
+    pub fn invert(&self) -> CtOption<Self> {
         (self.c0.square() - self.c1.square().mul_by_nonresidue())
-            ._invert()
+            .invert()
             .map(|t| Fp12 {
                 c0: self.c0 * t,
                 c1: self.c1 * -t,
             })
-    }
-
-    #[inline]
-    pub fn invert(&self) -> CtOption<Self> {
-        // #[cfg(target_os = "zkvm")]
-        // {
-        //     // Compute the inverse using the zkvm syscall
-        //     unconstrained! {
-        //         let mut buf = [0u8; 576];
-        //         buf.copy_from_slice(&self._invert().unwrap().to_bytes());
-        //         hint_slice(&buf);
-        //     }
-
-        //     let byte_vec = read_vec();
-        //     let bytes: [u8; 576] = byte_vec.try_into().unwrap();
-        //     let inv = Fp12::from_bytes(&bytes).unwrap();
-        //     CtOption::new(inv, !self.is_zero() & (self * inv).ct_eq(&Fp12::one()))
-        // }
-        // #[cfg(not(target_os = "zkvm"))]
-        {
-            self._invert()
-        }
     }
 
     #[inline]

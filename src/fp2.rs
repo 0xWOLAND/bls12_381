@@ -266,7 +266,8 @@ impl Fp2 {
         self.mul_r_inv_internal();
     }
 
-    fn _square(&self) -> Fp2 {
+    /// CPU implementation of squaring. Necessary to prevent syscalls in unconstrained mode.
+    pub(crate) fn cpu_square(&self) -> Fp2 {
         // Complex squaring:
         //
         // v0  = c0 * c1
@@ -279,13 +280,13 @@ impl Fp2 {
         // c0' = (c0 + c1) * (c0 - c1)
         // c1' = 2 * c0 * c1
 
-        let a = (&self.c0).add(&self.c1);
-        let b = (&self.c0).sub(&self.c1);
-        let c = (&self.c0).add(&self.c0);
+        let a = (&self.c0).cpu_add(&self.c1);
+        let b = (&self.c0).cpu_sub(&self.c1);
+        let c = (&self.c0).cpu_add(&self.c0);
 
         Fp2 {
-            c0: (&a).mul(&b),
-            c1: (&c).mul(&self.c1),
+            c0: (&a).cpu_mul(&b),
+            c1: (&c).cpu_mul(&self.c1),
         }
     }
 
@@ -299,7 +300,7 @@ impl Fp2 {
                 out.mul_r_inv_internal();
                 out
             } else {
-                self._square()
+                self.cpu_square()
             }
         }
     }
@@ -316,7 +317,8 @@ impl Fp2 {
         self.mul_r_inv_internal();
     }
 
-    fn _mul(&self, rhs: &Fp2) -> Fp2 {
+    /// CPU version of the multiplication operation. Necessary to prevent syscalls in unconstrained mode.
+    pub(crate) fn cpu_mul(&self, rhs: &Fp2) -> Fp2 {
         // F_{p^2} x F_{p^2} multiplication implemented with operand scanning (schoolbook)
         // computes the result as:
         //
@@ -330,7 +332,7 @@ impl Fp2 {
         // Each of these is a "sum of products", which we can compute efficiently.
 
         Fp2 {
-            c0: Fp::sum_of_products([self.c0, -self.c1], [rhs.c0, rhs.c1]),
+            c0: Fp::sum_of_products([self.c0, self.c1.cpu_neg()], [rhs.c0, rhs.c1]),
             c1: Fp::sum_of_products([self.c0, self.c1], [rhs.c1, rhs.c0]),
         }
     }
@@ -345,7 +347,7 @@ impl Fp2 {
                 out.mul_r_inv_internal();
                 out
             } else {
-                self._mul(rhs)
+                self.cpu_mul(rhs)
             }
         }
     }
@@ -372,10 +374,11 @@ impl Fp2 {
         }
     }
 
-    fn _add(&self, rhs: &Fp2) -> Fp2 {
+    /// CPU version of the addition operation. Necessary to prevent syscalls in unconstrained mode.
+    pub(crate) fn cpu_add(&self, rhs: &Fp2) -> Fp2 {
         Fp2 {
-            c0: (&self.c0)._add(&rhs.c0),
-            c1: (&self.c1)._add(&rhs.c1),
+            c0: (&self.c0).cpu_add(&rhs.c0),
+            c1: (&self.c1).cpu_add(&rhs.c1),
         }
     }
 
@@ -388,7 +391,7 @@ impl Fp2 {
                 }
                 out
             } else {
-                self._add(rhs)
+                self.cpu_add(rhs)
             }
         }
     }
@@ -401,6 +404,14 @@ impl Fp2 {
                 self.c0.0.as_mut_ptr() as *mut u32,
                 rhs.c0.0.as_ptr() as *const u32,
             );
+        }
+    }
+
+    /// CPU version of the subtraction operation. Necessary to prevent syscalls in unconstrained mode.
+    pub(crate) fn cpu_sub(&self, rhs: &Fp2) -> Fp2 {
+        Fp2 {
+            c0: (&self.c0).cpu_sub(&rhs.c0),
+            c1: (&self.c1).cpu_sub(&rhs.c1),
         }
     }
 
@@ -421,10 +432,11 @@ impl Fp2 {
         }
     }
 
-    fn _neg(&self) -> Fp2 {
+    /// CPU version of the negation operation. Necessary to prevent syscalls in unconstrained mode.
+    pub(crate) fn cpu_neg(&self) -> Fp2 {
         Fp2 {
-            c0: (&self.c0)._neg(),
-            c1: (&self.c1)._neg(),
+            c0: (&self.c0).cpu_neg(),
+            c1: (&self.c1).cpu_neg(),
         }
     }
 
@@ -437,12 +449,13 @@ impl Fp2 {
                 }
                 out
             } else {
-                self._neg()
+                self.cpu_neg()
             }
         }
     }
 
-    pub(crate) fn _sqrt(&self) -> CtOption<Self> {
+    /// CPU version of the square root operation. Necessary to prevent syscalls in unconstrained mode.
+    pub(crate) fn cpu_sqrt(&self) -> CtOption<Self> {
         // Algorithm 9, https://eprint.iacr.org/2012/685.pdf
         // with constant time modifications.
 
@@ -458,10 +471,10 @@ impl Fp2 {
             ]);
 
             // alpha = a1^2 * self = self^((p - 3) / 2 + 1) = self^((p - 1) / 2)
-            let alpha = a1._square()._mul(self);
+            let alpha = a1.cpu_square().cpu_mul(self);
 
             // x0 = self^((p + 1) / 4)
-            let x0 = a1._mul(self);
+            let x0 = a1.cpu_mul(self);
 
             // In the event that alpha = -1, the element is order p - 1 and so
             // we're just trying to get the square of an element of the subfield
@@ -469,15 +482,15 @@ impl Fp2 {
             // x0 = a + bu has b = 0, the solution is therefore au.
             CtOption::new(
                 Fp2 {
-                    c0: x0.c1._neg(),
+                    c0: x0.c1.cpu_neg(),
                     c1: x0.c0,
                 },
-                alpha.ct_eq(&(&Fp2::one())._neg()),
+                alpha.ct_eq(&(&Fp2::one()).cpu_neg()),
             )
             // Otherwise, the correct solution is (1 + alpha)^((q - 1) // 2) * x0
             .or_else(|| {
                 CtOption::new(
-                    (alpha._add(&Fp2::one()))
+                    (alpha.cpu_add(&Fp2::one()))
                         .pow_vartime_constrained(&[
                             0xdcff_7fff_ffff_d555,
                             0x0f55_ffff_58a9_ffff,
@@ -486,13 +499,13 @@ impl Fp2 {
                             0x258d_d3db_21a5_d66b,
                             0x0d00_88f5_1cbf_f34d,
                         ])
-                        ._mul(&x0),
+                        .cpu_mul(&x0),
                     Choice::from(1),
                 )
             })
             // Only return the result if it's really the square root (and so
             // self is actually quadratic nonresidue)
-            .and_then(|sqrt| CtOption::new(sqrt, sqrt._square().ct_eq(self)))
+            .and_then(|sqrt| CtOption::new(sqrt, sqrt.cpu_square().ct_eq(self)))
         })
     }
 
@@ -503,7 +516,7 @@ impl Fp2 {
         //     // Compute the inverse using the zkvm syscall
         //     unconstrained! {
         //         let mut buf = [0u8; 97];
-        //         self._sqrt().map(|sqrt| {
+        //         self.cpu_sqrt().map(|sqrt| {
         //             buf[..96].copy_from_slice(&sqrt.to_bytes());
         //             buf[96] = 1;
         //         });
@@ -522,14 +535,15 @@ impl Fp2 {
         // }
         // #[cfg(not(target_os = "zkvm"))]
         {
-            self._sqrt()
+            self.cpu_sqrt()
         }
     }
 
     /// Computes the multiplicative inverse of this field
     /// element, returning None in the case that this element
     /// is zero.
-    pub(crate) fn _invert(&self) -> CtOption<Self> {
+    /// CPU version of the inversion operation. Necessary to prevent syscalls in unconstrained mode.
+    pub(crate) fn cpu_invert(&self) -> CtOption<Self> {
         // We wish to find the multiplicative inverse of a nonzero
         // element a + bu in Fp2. We leverage an identity
         //
@@ -544,40 +558,40 @@ impl Fp2 {
         // of (a + bu). Importantly, this can be computing using
         // only a single inversion in Fp.
 
-        (self.c0._square()._add(&self.c1._square()))
-            ._invert()
+        (self.c0.cpu_square().cpu_add(&self.c1.cpu_square()))
+            .cpu_invert()
             .map(|t| Fp2 {
-                c0: self.c0._mul(&t),
-                c1: self.c1._mul(&t._neg()),
+                c0: self.c0.cpu_mul(&t),
+                c1: self.c1.cpu_mul(&t.cpu_neg()),
             })
     }
 
     pub fn invert(&self) -> CtOption<Self> {
-        // #[cfg(target_os = "zkvm")]
-        // {
-        //     // Compute the inverse using the zkvm syscall
-        //     unconstrained! {
-        //         let mut buf = [0u8; 97];
-        //         self._invert().map(|inv| {
-        //             buf[..96].copy_from_slice(&inv.to_bytes());
-        //             buf[96] = 1;
-        //         });
-        //         hint_slice(&buf);
-        //     }
-
-        //     let byte_vec = read_vec();
-        //     let bytes: [u8; 97] = byte_vec.try_into().unwrap();
-        //     match bytes[96] {
-        //         0 => CtOption::new(Fp2::zero(), Choice::from(0u8)),
-        //         _ => {
-        //             let inv = Fp2::from_bytes(&bytes[0..96].try_into().unwrap()).unwrap();
-        //             CtOption::new(inv, !self.is_zero() & (self * inv).ct_eq(&Fp2::one()))
-        //         }
-        //     }
-        // }
-        // #[cfg(not(target_os = "zkvm"))]
+        #[cfg(target_os = "zkvm")]
         {
-            self._invert()
+            // Compute the inverse using the zkvm syscall
+            unconstrained! {
+                let mut buf = [0u8; 97];
+                self.cpu_invert().map(|inv| {
+                    buf[..96].copy_from_slice(&inv.to_bytes());
+                    buf[96] = 1;
+                });
+                hint_slice(&buf);
+            }
+
+            let byte_vec = read_vec();
+            let bytes: [u8; 97] = byte_vec.try_into().unwrap();
+            match bytes[96] {
+                0 => CtOption::new(Fp2::zero(), Choice::from(0u8)),
+                _ => {
+                    let inv = Fp2::from_bytes(&bytes[0..96].try_into().unwrap()).unwrap();
+                    CtOption::new(inv, !self.is_zero() & (self * inv).ct_eq(&Fp2::one()))
+                }
+            }
+        }
+        #[cfg(not(target_os = "zkvm"))]
+        {
+            self.cpu_invert()
         }
     }
 
@@ -585,10 +599,10 @@ impl Fp2 {
         let mut res = Self::one();
         for e in by.iter().rev() {
             for i in (0..64).rev() {
-                res = res._square();
+                res = res.cpu_square();
 
                 if ((*e >> i) & 1) == 1 {
-                    res = res._mul(self);
+                    res = res.cpu_mul(self);
                 }
             }
         }
