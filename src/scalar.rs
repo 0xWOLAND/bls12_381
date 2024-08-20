@@ -357,7 +357,8 @@ impl Scalar {
     }
 
     #[inline]
-    fn _square(&self) -> Scalar {
+    /// Non-ZKVM version of the square operation. Necessary to prevent syscalls in unconstrained mode.
+    fn cpu_square(&self) -> Scalar {
         let (r1, carry) = mac(0, self.0[0], self.0[1], 0);
         let (r2, carry) = mac(0, self.0[0], self.0[2], carry);
         let (r3, r4) = mac(0, self.0[0], self.0[3], carry);
@@ -390,15 +391,15 @@ impl Scalar {
     /// Squares this element.
     #[inline]
     pub fn square(&self) -> Scalar {
-        // cfg_if! {
-        //     if #[cfg(target_os = "zkvm")] {
-        //         let mut res = *self;
-        //         res.mul_inp(self);
-        //         res
-        //     } else {
-        self._square()
-        //     }
-        // }
+        cfg_if! {
+            if #[cfg(target_os = "zkvm")] {
+                let mut res = *self;
+                res.mul_inp(self);
+                res
+            } else {
+                self.cpu_square()
+            }
+        }
     }
 
     /// Exponentiates `self` by `by`, where `by` is a
@@ -438,99 +439,100 @@ impl Scalar {
 
     /// Computes the multiplicative inverse of this element,
     /// failing if the element is zero.
-    fn _invert(&self) -> CtOption<Self> {
+    /// Non-ZKVM version of the invert operation. Necessary to prevent syscalls in unconstrained mode.
+    fn cpu_invert(&self) -> CtOption<Self> {
         #[inline(always)]
         fn square_assign_multi(n: &mut Scalar, num_times: usize) {
             for _ in 0..num_times {
-                *n = n._square();
+                *n = n.cpu_square();
             }
         }
         // found using https://github.com/kwantam/addchain
-        let mut t0 = self._square();
-        let mut t1 = t0._mul(self);
-        let mut t16 = t0._square();
-        let mut t6 = t16._square();
-        let mut t5 = t6._mul(&t0);
-        t0 = t6._mul(&t16);
-        let mut t12 = t5._mul(&t16);
-        let mut t2 = t6._square();
-        let mut t7 = t5._mul(&t6);
-        let mut t15 = t0._mul(&t5);
-        let mut t17 = t12._square();
-        t1 = t1._mul(&t17);
-        let mut t3 = t7._mul(&t2);
-        let t8 = t1._mul(&t17);
-        let t4 = t8._mul(&t2);
-        let t9 = t8._mul(&t7);
-        t7 = t4._mul(&t5);
-        let t11 = t4._mul(&t17);
-        t5 = t9._mul(&t17);
-        let t14 = t7._mul(&t15);
-        let t13 = t11._mul(&t12);
-        t12 = t11._mul(&t17);
-        t15 = t15._mul(&t12);
-        t16 = t16._mul(&t15);
-        t3 = t3._mul(&t16);
-        t17 = t17._mul(&t3);
-        t0 = t0._mul(&t17);
-        t6 = t6._mul(&t0);
-        t2 = t2._mul(&t6);
+        let mut t0 = self.cpu_square();
+        let mut t1 = t0.cpu_mul(self);
+        let mut t16 = t0.cpu_square();
+        let mut t6 = t16.cpu_square();
+        let mut t5 = t6.cpu_mul(&t0);
+        t0 = t6.cpu_mul(&t16);
+        let mut t12 = t5.cpu_mul(&t16);
+        let mut t2 = t6.cpu_square();
+        let mut t7 = t5.cpu_mul(&t6);
+        let mut t15 = t0.cpu_mul(&t5);
+        let mut t17 = t12.cpu_square();
+        t1 = t1.cpu_mul(&t17);
+        let mut t3 = t7.cpu_mul(&t2);
+        let t8 = t1.cpu_mul(&t17);
+        let t4 = t8.cpu_mul(&t2);
+        let t9 = t8.cpu_mul(&t7);
+        t7 = t4.cpu_mul(&t5);
+        let t11 = t4.cpu_mul(&t17);
+        t5 = t9.cpu_mul(&t17);
+        let t14 = t7.cpu_mul(&t15);
+        let t13 = t11.cpu_mul(&t12);
+        t12 = t11.cpu_mul(&t17);
+        t15 = t15.cpu_mul(&t12);
+        t16 = t16.cpu_mul(&t15);
+        t3 = t3.cpu_mul(&t16);
+        t17 = t17.cpu_mul(&t3);
+        t0 = t0.cpu_mul(&t17);
+        t6 = t6.cpu_mul(&t0);
+        t2 = t2.cpu_mul(&t6);
         square_assign_multi(&mut t0, 8);
-        t0 = t0._mul(&t17);
+        t0 = t0.cpu_mul(&t17);
         square_assign_multi(&mut t0, 9);
-        t0 = t0._mul(&t16);
+        t0 = t0.cpu_mul(&t16);
         square_assign_multi(&mut t0, 9);
-        t0 = t0._mul(&t15);
+        t0 = t0.cpu_mul(&t15);
         square_assign_multi(&mut t0, 9);
-        t0 = t0._mul(&t15);
+        t0 = t0.cpu_mul(&t15);
         square_assign_multi(&mut t0, 7);
-        t0 = t0._mul(&t14);
+        t0 = t0.cpu_mul(&t14);
         square_assign_multi(&mut t0, 7);
-        t0 = t0._mul(&t13);
+        t0 = t0.cpu_mul(&t13);
         square_assign_multi(&mut t0, 10);
-        t0 = t0._mul(&t12);
+        t0 = t0.cpu_mul(&t12);
         square_assign_multi(&mut t0, 9);
-        t0 = t0._mul(&t11);
+        t0 = t0.cpu_mul(&t11);
         square_assign_multi(&mut t0, 8);
-        t0 = t0._mul(&t8);
+        t0 = t0.cpu_mul(&t8);
         square_assign_multi(&mut t0, 8);
-        t0 = t0._mul(self);
+        t0 = t0.cpu_mul(self);
         square_assign_multi(&mut t0, 14);
-        t0 = t0._mul(&t9);
+        t0 = t0.cpu_mul(&t9);
         square_assign_multi(&mut t0, 10);
-        t0 = t0._mul(&t8);
+        t0 = t0.cpu_mul(&t8);
         square_assign_multi(&mut t0, 15);
-        t0 = t0._mul(&t7);
+        t0 = t0.cpu_mul(&t7);
         square_assign_multi(&mut t0, 10);
-        t0 = t0._mul(&t6);
+        t0 = t0.cpu_mul(&t6);
         square_assign_multi(&mut t0, 8);
-        t0 = t0._mul(&t5);
+        t0 = t0.cpu_mul(&t5);
         square_assign_multi(&mut t0, 16);
-        t0 = t0._mul(&t3);
+        t0 = t0.cpu_mul(&t3);
         square_assign_multi(&mut t0, 8);
-        t0 = t0._mul(&t2);
+        t0 = t0.cpu_mul(&t2);
         square_assign_multi(&mut t0, 7);
-        t0 = t0._mul(&t4);
+        t0 = t0.cpu_mul(&t4);
         square_assign_multi(&mut t0, 9);
-        t0 = t0._mul(&t2);
+        t0 = t0.cpu_mul(&t2);
         square_assign_multi(&mut t0, 8);
-        t0 = t0._mul(&t3);
+        t0 = t0.cpu_mul(&t3);
         square_assign_multi(&mut t0, 8);
-        t0 = t0._mul(&t2);
+        t0 = t0.cpu_mul(&t2);
         square_assign_multi(&mut t0, 8);
-        t0 = t0._mul(&t2);
+        t0 = t0.cpu_mul(&t2);
         square_assign_multi(&mut t0, 8);
-        t0 = t0._mul(&t2);
+        t0 = t0.cpu_mul(&t2);
         square_assign_multi(&mut t0, 8);
-        t0 = t0._mul(&t3);
+        t0 = t0.cpu_mul(&t3);
         square_assign_multi(&mut t0, 8);
-        t0 = t0._mul(&t2);
+        t0 = t0.cpu_mul(&t2);
         square_assign_multi(&mut t0, 8);
-        t0 = t0._mul(&t2);
+        t0 = t0.cpu_mul(&t2);
         square_assign_multi(&mut t0, 5);
-        t0 = t0._mul(&t1);
+        t0 = t0.cpu_mul(&t1);
         square_assign_multi(&mut t0, 5);
-        t0 = t0._mul(&t1);
+        t0 = t0.cpu_mul(&t1);
 
         CtOption::new(t0, !self.ct_eq(&Self::zero()))
     }
@@ -540,7 +542,7 @@ impl Scalar {
         {
             unconstrained! {
                 let mut buf = [0u8; 33];
-                self._invert().map(|inv| {
+                self.cpu_invert().map(|inv| {
                     buf[0..32].copy_from_slice(&inv.to_bytes());
                     buf[32] = 1;
                 });
@@ -558,7 +560,7 @@ impl Scalar {
         }
         #[cfg(not(target_os = "zkvm"))]
         {
-            self._invert()
+            self.cpu_invert()
         }
     }
 
@@ -644,7 +646,8 @@ impl Scalar {
         }
     }
 
-    fn _mul(&self, rhs: &Self) -> Self {
+    /// Non-ZKVM version of the multiplication operation. Necessary to prevent syscalls in unconstrained mode.
+    fn cpu_mul(&self, rhs: &Self) -> Self {
         // Schoolbook multiplication
 
         let (r0, carry) = mac(0, self.0[0], rhs.0[0], 0);
@@ -679,7 +682,7 @@ impl Scalar {
                 res.mul_inp(rhs);
                 res
             } else {
-                self._mul(rhs)
+                self.cpu_mul(rhs)
             }
         }
     }
